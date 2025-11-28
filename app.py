@@ -3,7 +3,7 @@ import pandas as pd
 import joblib
 from twilio.rest import Client
 import urllib.parse
-CONTACTS_FILE = "contacts.csv"
+
 
 # Load Twilio credentials safely
 TWILIO_SID = st.secrets["TWILIO_SID"]
@@ -184,33 +184,27 @@ with tab2:
             st.metric("Predicted Safety Score", f"{score:.2f}")
             st.write(f"**Risk Level:** `{risk}`")
 
-# Load or create contacts file
-# -----------------------------------
-def load_contacts():
-    if not os.path.exists(CONTACTS_FILE):
-        df = pd.DataFrame(columns=["name", "number"])
-        df.to_csv(CONTACTS_FILE, index=False)
-        return df
-    return pd.read_csv(CONTACTS_FILE)
+def get_contacts():
+    """Load contacts from Streamlit Secrets."""
+    return st.secrets["contacts"].get("list", [])
 
-def save_contact(name, number):
-    df = load_contacts()
-    new_row = pd.DataFrame([[name, number]], columns=["name", "number"])
-    df = pd.concat([df, new_row], ignore_index=True)
-    df.to_csv(CONTACTS_FILE, index=False)
-    return df
+def add_contact(name, number):
+    """Add new contact to Streamlit Secrets."""
+    contacts = get_contacts()
+    contacts.append({"name": name, "number": number})
 
-# -----------------------------------
-# TAB 3 UI
-# -----------------------------------
+    # Save back to secrets
+    st.secrets["contacts"]["list"] = contacts
+
+
+# ---------------------------------------------
+# TAB 3 - SOS Assistant (Multi Contact)
+# ---------------------------------------------
 with tab3:
 
     st.header("🚨 SOS Message Assistant (Multi-Contact + Location Enabled)")
 
-    st.markdown("""
-    This feature sends an emergency alert to **multiple trusted contacts**  
-    with **your location + details** instantly on WhatsApp.
-    """)
+    st.write("Send your real-time SOS alert to multiple trusted contacts.")
 
     # ---------------------------
     # USER DETAILS
@@ -227,21 +221,22 @@ with tab3:
     st.markdown("---")
 
     # ---------------------------
-    # MANAGE CONTACTS
+    # LOAD SAVED CONTACTS
     # ---------------------------
     st.subheader("2️⃣ Trusted Contacts")
 
-    contacts_df = load_contacts()
+    contacts = get_contacts()
 
-    if contacts_df.empty:
-        st.warning("⚠ No contacts saved. Add at least one.")
+    if len(contacts) == 0:
+        st.warning("⚠ No contacts saved yet.")
+        selected = []
     else:
         contact_list = [
-            f"{row['name']} ({row['number']})"
-            for i, row in contacts_df.iterrows()
+            f"{c['name']} ({c['number']})" for c in contacts
         ]
-        selected_contacts = st.multiselect(
-            "Select contacts to alert:",
+
+        selected = st.multiselect(
+            "Select contacts to send alert:",
             contact_list
         )
 
@@ -250,7 +245,7 @@ with tab3:
     # ---------------------------
     st.markdown("### ➕ Add New Contact")
 
-    col_a, col_b, col_c = st.columns([4, 4, 2])
+    col_a, col_b, col_c = st.columns([3, 3, 2])
     with col_a:
         new_name = st.text_input("Name", key="new_contact_name")
     with col_b:
@@ -258,12 +253,12 @@ with tab3:
     with col_c:
         if st.button("Add"):
             if not new_name or not new_number:
-                st.error("❌ Enter both name and number!")
+                st.error("Enter both name and number.")
             elif not new_number.isdigit() or len(new_number) != 10:
-                st.error("❌ Enter valid 10-digit number!")
+                st.error("Number must be 10 digits.")
             else:
-                save_contact(new_name, new_number)
-                st.success(f"✔ Added {new_name}")
+                add_contact(new_name, new_number)
+                st.success(f"Added {new_name}!")
                 st.rerun()
 
     st.markdown("---")
@@ -273,36 +268,33 @@ with tab3:
     # ---------------------------
     st.subheader("3️⃣ Generate SOS Message")
 
-    if st.button("Generate SOS 🚨", key="generate_sos"):
+    if st.button("Generate SOS 🚨"):
+
         if not user_name or not user_area:
-            st.error("❌ Fill your name & area.")
-        elif contacts_df.empty:
-            st.error("❌ Please add at least one contact first.")
-        elif not selected_contacts:
-            st.error("❌ Select at least one contact.")
+            st.error("Fill your name & area.")
+        elif len(selected) == 0:
+            st.error("Select at least one contact.")
         else:
-            # Base SOS Message
-            sos_msg = (
+            sos_text = (
                 f"🚨 EMERGENCY ALERT 🚨\n"
                 f"I, {user_name}, am feeling unsafe at {user_area}.\n"
-                f"Please contact me immediately.\n"
+                f"Please contact me immediately."
             )
 
             if maps_link.strip():
-                sos_msg += f"\n📍 Location: {maps_link.strip()}"
+                sos_text += f"\n\n📍 Location: {maps_link.strip()}"
 
-            st.success("✔ SOS Message Generated Below:")
-            st.code(sos_msg, language="text")
+            st.success("✔ SOS Message Generated:")
+            st.code(sos_text, language="text")
 
-            st.markdown("### 📤 Send to Contacts Below:")
+            st.markdown("### 📤 Send to Contacts")
 
-            # Generate WA message for each selected contact
-            for contact in selected_contacts:
-                name, number = contact.split("(")
-                number = number.replace(")", "")
+            encoded = urllib.parse.quote(sos_text)
 
-                encoded = urllib.parse.quote(sos_msg)
+            for entry in selected:
+                name, number = entry.split("(")
+                number = number.replace(")", "").strip()
+
                 wa_url = f"https://wa.me/91{number}?text={encoded}"
 
                 st.link_button(f"Send to {name.strip()} 📲", wa_url)
-
