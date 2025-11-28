@@ -3,7 +3,7 @@ import pandas as pd
 import joblib
 from twilio.rest import Client
 import urllib.parse
-
+CONTACTS_FILE = "contacts.csv"
 
 # Load Twilio credentials safely
 TWILIO_SID = st.secrets["TWILIO_SID"]
@@ -184,78 +184,125 @@ with tab2:
             st.metric("Predicted Safety Score", f"{score:.2f}")
             st.write(f"**Risk Level:** `{risk}`")
 
-# ---------- TAB 3: SOS ASSISTANT ----------
+# Load or create contacts file
+# -----------------------------------
+def load_contacts():
+    if not os.path.exists(CONTACTS_FILE):
+        df = pd.DataFrame(columns=["name", "number"])
+        df.to_csv(CONTACTS_FILE, index=False)
+        return df
+    return pd.read_csv(CONTACTS_FILE)
 
+def save_contact(name, number):
+    df = load_contacts()
+    new_row = pd.DataFrame([[name, number]], columns=["name", "number"])
+    df = pd.concat([df, new_row], ignore_index=True)
+    df.to_csv(CONTACTS_FILE, index=False)
+    return df
+
+# -----------------------------------
+# TAB 3 UI
+# -----------------------------------
 with tab3:
-    st.subheader("🚨 SOS Message Assistant (Direct WhatsApp + Location)")
-    st.write(
-        "Emergency vandha odane, un trusted contact ku "
-        "ready-made SOS message-um, Google Maps location link-um anupalaam."
-    )
 
-    st.markdown("#### 1️⃣ Basic Details")
-    col_a, col_b = st.columns(2)
+    st.header("🚨 SOS Message Assistant (Multi-Contact + Location Enabled)")
 
+    st.markdown("""
+    This feature sends an emergency alert to **multiple trusted contacts**  
+    with **your location + details** instantly on WhatsApp.
+    """)
+
+    # ---------------------------
+    # USER DETAILS
+    # ---------------------------
+    st.subheader("1️⃣ Your Details")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        user_name = st.text_input("Your Name")
+        user_area = st.text_input("Your Area / City")
+    with col2:
+        maps_link = st.text_input("Google Maps Location Link (Optional)")
+
+    st.markdown("---")
+
+    # ---------------------------
+    # MANAGE CONTACTS
+    # ---------------------------
+    st.subheader("2️⃣ Trusted Contacts")
+
+    contacts_df = load_contacts()
+
+    if contacts_df.empty:
+        st.warning("⚠ No contacts saved. Add at least one.")
+    else:
+        contact_list = [
+            f"{row['name']} ({row['number']})"
+            for i, row in contacts_df.iterrows()
+        ]
+        selected_contacts = st.multiselect(
+            "Select contacts to alert:",
+            contact_list
+        )
+
+    # ---------------------------
+    # ADD NEW CONTACT
+    # ---------------------------
+    st.markdown("### ➕ Add New Contact")
+
+    col_a, col_b, col_c = st.columns([4, 4, 2])
     with col_a:
-        name = st.text_input("Your Name")
-        area = st.text_input(
-            "Area / City (short description)",
-            placeholder="Eg: Anna Nagar, Chennai"
-        )
-
+        new_name = st.text_input("Name", key="new_contact_name")
     with col_b:
-        friend_name = st.text_input("Trusted Contact Name")
-        friend_number = st.text_input(
-            "Trusted WhatsApp Number (10 digits only)",
-            placeholder="Eg: 8220827025"
-        )
+        new_number = st.text_input("WhatsApp Number (10 digits)", key="new_contact_num")
+    with col_c:
+        if st.button("Add"):
+            if not new_name or not new_number:
+                st.error("❌ Enter both name and number!")
+            elif not new_number.isdigit() or len(new_number) != 10:
+                st.error("❌ Enter valid 10-digit number!")
+            else:
+                save_contact(new_name, new_number)
+                st.success(f"✔ Added {new_name}")
+                st.rerun()
 
-    st.markdown("#### 2️⃣ (Optional) Exact Google Maps Location Link")
-    maps_link = st.text_input(
-        "Google Maps location link",
-        placeholder="Maps app la irundhu 'Share' → 'Copy link' paste pannunga"
-    )
+    st.markdown("---")
 
-    if st.button("Generate & Prepare WhatsApp SOS 🚨", key="sos_whatsapp"):
-        
-        # Basic validation
-        if not name or not area or not friend_name or not friend_number:
-            st.error("Name, area, contact name, contact number – ellame fill pannunga bro.")
-            st.stop()
+    # ---------------------------
+    # GENERATE SOS MESSAGE
+    # ---------------------------
+    st.subheader("3️⃣ Generate SOS Message")
 
-        if not friend_number.isdigit() or len(friend_number) != 10:
-            st.error("Trusted contact number 10 digits (only numbers) irukkanum. Eg: 8220827025")
-            st.stop()
+    if st.button("Generate SOS 🚨", key="generate_sos"):
+        if not user_name or not user_area:
+            st.error("❌ Fill your name & area.")
+        elif contacts_df.empty:
+            st.error("❌ Please add at least one contact first.")
+        elif not selected_contacts:
+            st.error("❌ Select at least one contact.")
+        else:
+            # Base SOS Message
+            sos_msg = (
+                f"🚨 EMERGENCY ALERT 🚨\n"
+                f"I, {user_name}, am feeling unsafe at {user_area}.\n"
+                f"Please contact me immediately.\n"
+            )
 
-        # Base SOS message
-        sos_msg = (
-            f"🚨 EMERGENCY ALERT 🚨\n"
-            f"I, {name}, am feeling unsafe at {area}.\n"
-            f"Please contact me immediately.\n"
-            f"Primary trusted contact: {friend_name}.\n"
-            f"My phone number: +91{friend_number}."
-        )
+            if maps_link.strip():
+                sos_msg += f"\n📍 Location: {maps_link.strip()}"
 
-        # Add location link if provided
-        if maps_link.strip():
-            sos_msg += f"\n\n📍 Location link: {maps_link.strip()}"
+            st.success("✔ SOS Message Generated Below:")
+            st.code(sos_msg, language="text")
 
-        st.markdown("#### ✅ Generated SOS Message")
-        st.code(sos_msg, language="text")
+            st.markdown("### 📤 Send to Contacts Below:")
 
-        # Encode message for WhatsApp URL
-        encoded_text = urllib.parse.quote(sos_msg)
-        full_number = "91" + friend_number.strip()
+            # Generate WA message for each selected contact
+            for contact in selected_contacts:
+                name, number = contact.split("(")
+                number = number.replace(")", "")
 
-        wa_url = f"https://wa.me/{full_number}?text={encoded_text}"
+                encoded = urllib.parse.quote(sos_msg)
+                wa_url = f"https://wa.me/91{number}?text={encoded}"
 
-        st.success("Ready! Keela button press pannina WhatsApp open aagum.")
-        st.link_button("Send this SOS via WhatsApp 🚨", wa_url)
-
-        st.info(
-            "👉 Button press pannina WhatsApp open aagum, message already type aayirukkum.\n"
-            "Nee SEND press panna podhum – direct-ah un friend ku pogum (Twilio illa, free)."
-        )
-
-
+                st.link_button(f"Send to {name.strip()} 📲", wa_url)
 
