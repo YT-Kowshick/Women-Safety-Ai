@@ -1,6 +1,27 @@
 import streamlit as st
 import pandas as pd
 import joblib
+from twilio.rest import Client
+
+# Load Twilio credentials safely
+TWILIO_SID = st.secrets["TWILIO_SID"]
+TWILIO_AUTH = st.secrets["TWILIO_AUTH"]
+TWILIO_WHATSAPP = "whatsapp:+14155238886"
+
+
+client = Client(TWILIO_SID, TWILIO_AUTH)
+
+def send_whatsapp_sos(message, user_phone):
+    try:
+        msg = client.messages.create(
+            from_=TWILIO_WHATSAPP,
+            body=message,
+            to=f"whatsapp:{user_phone}"
+        )
+        return True
+    except Exception as e:
+        return False
+
 
 # ---------- LOAD DATA & MODEL ----------
 
@@ -163,23 +184,31 @@ with tab2:
 
 # ---------- TAB 3: SOS ASSISTANT ----------
 
+# ---------- TAB 3: SOS ASSISTANT ----------
+
 with tab3:
-    st.subheader("🚨 SOS Message Assistant")
-    st.write("Generate a quick SOS message that you can copy into WhatsApp / SMS in a real emergency.")
+    st.subheader("🚨 SOS Message Assistant (WhatsApp Enabled)")
+    st.write("Send a real-time SOS alert to your verified WhatsApp number.")
 
     name = st.text_input("Your Name")
-    location = st.text_input("Current Location (Area / City)")
-    contact = st.text_input("Trusted Contact Name")
+    location = st.text_input("Your Current Location")
+    user_phone = st.text_input("Your WhatsApp Number (+91xxxxxxxxxx)")
 
-    if st.button("Generate SOS Message", key="sos"):
-        if not name or not location or not contact:
+    if st.button("Send WhatsApp SOS 🚨", key="real_sos"):
+        if not name or not location or not user_phone:
             st.error("Please fill all fields.")
         else:
             sos_msg = (
-                f"EMERGENCY!\n"
-                f"I, {name}, am feeling unsafe at {location}.\n"
-                f"Please contact me immediately.\n"
-                f"Primary trusted contact: {contact}."
+                f"🚨 *EMERGENCY ALERT* 🚨\n"
+                f"Name: {name}\n"
+                f"Location: {location}\n"
+                f"I feel unsafe. Please contact me immediately."
             )
-            st.code(sos_msg, language="text")
-            st.info("You can copy-paste this message into WhatsApp / SMS.")
+
+            ok = send_whatsapp_sos(sos_msg, user_phone)
+
+            if ok:
+                st.success("WhatsApp SOS sent successfully! 🚨 Check your phone.")
+            else:
+                st.error("Failed to send WhatsApp SOS ❌")
+
