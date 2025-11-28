@@ -187,28 +187,53 @@ with tab2:
 # ---------- TAB 3: SOS ASSISTANT ----------
 
 with tab3:
-    st.subheader("🚨 SOS Message Assistant (WhatsApp Enabled)")
-    st.write("Send a real-time SOS alert to your verified WhatsApp number.")
+    st.subheader("🚨 SOS Message Assistant (Direct WhatsApp)")
+    st.write("Emergency vandha odane un trusted contact ku WhatsApp la message anupa use pannalam.")
 
-    name = st.text_input("Your Name")
-    location = st.text_input("Your Current Location")
-    user_phone = st.text_input("Your WhatsApp Number (+91xxxxxxxxxx)")
+    col_a, col_b = st.columns(2)
+    with col_a:
+        name = st.text_input("Your Name")
+        location = st.text_input("Your Current Location (Area / City)")
+    with col_b:
+        friend_name = st.text_input("Trusted Contact Name")
+        # +91 illaama, 10 digit mattum type panna sollu
+        friend_number = st.text_input("Trusted WhatsApp Number (10 digits only)")
 
-    if st.button("Send WhatsApp SOS 🚨", key="real_sos"):
-        if not name or not location or not user_phone:
-            st.error("Please fill all fields.")
+    # Optional: Maps link
+    maps_link = st.text_input(
+        "Optional: Google Maps location link (paste here if you shared from Maps)",
+        placeholder="https://maps.app.goo.gl/..."
+    )
+
+    if st.button("Generate SOS Message 🛑"):
+        if not (name and location and friend_name and friend_number):
+            st.error("Ella main fields-um fill pannunga (name, location, contact name, contact number).")
         else:
+            # SOS text
             sos_msg = (
-                f"🚨 *EMERGENCY ALERT* 🚨\n"
-                f"Name: {name}\n"
-                f"Location: {location}\n"
-                f"I feel unsafe. Please contact me immediately."
+                f"EMERGENCY!\n"
+                f"I, {name}, am feeling unsafe at {location}.\n"
+                f"Please contact me immediately.\n"
+                f"Primary trusted contact: {friend_name}.\n"
+                f"My phone number: +91{friend_number}."
             )
 
-            ok = send_whatsapp_sos(sos_msg, user_phone)
+            if maps_link.strip():
+                sos_msg += f"\n\nLocation link: {maps_link.strip()}"
 
-            if ok:
-                st.success("WhatsApp SOS sent successfully! 🚨 Check your phone.")
-            else:
-                st.error("Failed to send WhatsApp SOS ❌")
+            st.markdown("#### Generated SOS Message")
+            st.code(sos_msg, language="text")
+
+            # WhatsApp direct link
+            import urllib.parse
+            encoded = urllib.parse.quote(sos_msg)
+            full_number = "91" + friend_number.strip()  # country code +91
+
+            wa_url = f"https://wa.me/{full_number}?text={encoded}"
+
+            st.success("Ready! Button press pannina WhatsApp open aagum.")
+            st.link_button("Send on WhatsApp 🚨", wa_url)
+            st.info("👉 Button press pannitu WhatsApp la SEND press pannunga. "
+                    "Friend ku direct-ah SOS pogum.")
+
 
