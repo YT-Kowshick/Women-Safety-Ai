@@ -184,17 +184,20 @@ with tab2:
             st.metric("Predicted Safety Score", f"{score:.2f}")
             st.write(f"**Risk Level:** `{risk}`")
 
+if "contacts" not in st.session_state:
+    st.session_state["contacts"] = []   # list of {"name":..., "number":...}
+
+
 def get_contacts():
-    """Load contacts from Streamlit Secrets."""
-    return st.secrets["contacts"].get("list", [])
+    """Load contacts from session."""
+    return st.session_state["contacts"]
+
 
 def add_contact(name, number):
-    """Add new contact to Streamlit Secrets."""
-    contacts = get_contacts()
+    """Add new contact to session."""
+    contacts = st.session_state["contacts"]
     contacts.append({"name": name, "number": number})
-
-    # Save back to secrets
-    st.secrets["contacts"]["list"] = contacts
+    st.session_state["contacts"] = contacts
 
 
 # ---------------------------------------------
@@ -204,10 +207,13 @@ with tab3:
 
     st.header("🚨 SOS Message Assistant (Multi-Contact + Location Enabled)")
 
-    st.write("Send your real-time SOS alert to multiple trusted contacts.")
+    st.write(
+        "Send your real-time SOS alert to **multiple trusted contacts** "
+        "with your details + Google Maps location link on WhatsApp."
+    )
 
     # ---------------------------
-    # USER DETAILS
+    # 1️⃣ USER DETAILS
     # ---------------------------
     st.subheader("1️⃣ Your Details")
 
@@ -216,12 +222,15 @@ with tab3:
         user_name = st.text_input("Your Name")
         user_area = st.text_input("Your Area / City")
     with col2:
-        maps_link = st.text_input("Google Maps Location Link (Optional)")
+        maps_link = st.text_input(
+            "Google Maps Location Link (Optional)",
+            placeholder="Paste Maps → Share → Copy link"
+        )
 
     st.markdown("---")
 
     # ---------------------------
-    # LOAD SAVED CONTACTS
+    # 2️⃣ TRUSTED CONTACTS
     # ---------------------------
     st.subheader("2️⃣ Trusted Contacts")
 
@@ -234,14 +243,13 @@ with tab3:
         contact_list = [
             f"{c['name']} ({c['number']})" for c in contacts
         ]
-
         selected = st.multiselect(
             "Select contacts to send alert:",
             contact_list
         )
 
     # ---------------------------
-    # ADD NEW CONTACT
+    # ➕ ADD NEW CONTACT
     # ---------------------------
     st.markdown("### ➕ Add New Contact")
 
@@ -249,13 +257,17 @@ with tab3:
     with col_a:
         new_name = st.text_input("Name", key="new_contact_name")
     with col_b:
-        new_number = st.text_input("WhatsApp Number (10 digits)", key="new_contact_num")
+        new_number = st.text_input(
+            "WhatsApp Number (10 digits)",
+            key="new_contact_num",
+            placeholder="Eg: 8220827025"
+        )
     with col_c:
         if st.button("Add"):
             if not new_name or not new_number:
                 st.error("Enter both name and number.")
             elif not new_number.isdigit() or len(new_number) != 10:
-                st.error("Number must be 10 digits.")
+                st.error("Number must be 10 digits (only numbers).")
             else:
                 add_contact(new_name, new_number)
                 st.success(f"Added {new_name}!")
@@ -264,7 +276,7 @@ with tab3:
     st.markdown("---")
 
     # ---------------------------
-    # GENERATE SOS MESSAGE
+    # 3️⃣ GENERATE SOS MESSAGE
     # ---------------------------
     st.subheader("3️⃣ Generate SOS Message")
 
@@ -296,5 +308,4 @@ with tab3:
                 number = number.replace(")", "").strip()
 
                 wa_url = f"https://wa.me/91{number}?text={encoded}"
-
                 st.link_button(f"Send to {name.strip()} 📲", wa_url)
