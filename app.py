@@ -1,6 +1,7 @@
 ############################################
 #  AI BY HER — NEON PREMIUM A2 DASHBOARD   #
 #  Final single-file app.py (shap optional)
+#  Now with Folium (Leaflet) interactive map
 ############################################
 
 import streamlit as st
@@ -16,13 +17,22 @@ from twilio.rest import Client
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 
-# Make SHAP optional — import inside try/except
+# Optional SHAP
 try:
     import shap
     import matplotlib.pyplot as plt
     SHAP_AVAILABLE = True
 except Exception:
     SHAP_AVAILABLE = False
+
+# Folium + streamlit_folium (may be missing in some envs -> handle gracefully)
+try:
+    import folium
+    from streamlit_folium import st_folium
+    from branca.colormap import linear
+    FOLIUM_AVAILABLE = True
+except Exception:
+    FOLIUM_AVAILABLE = False
 
 ############################################
 # PAGE CONFIG + GLOBAL NEON CSS
@@ -34,82 +44,23 @@ st.set_page_config(
     layout="wide"
 )
 
-# ------ NEON THEME CSS -------- #
 st.markdown("""
 <style>
-
 @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
-
-html, body, [class*="css"] {
-    font-family: 'Poppins', sans-serif;
-    background: #0b0f19;
-}
-
-/* Gradient Header */
-.header-box {
-    width: 100%;
-    padding: 25px;
-    border-radius: 16px;
-    margin-bottom: 25px;
+html, body, [class*="css"] { font-family: 'Poppins', sans-serif; background: #0b0f19; color: #e6eef8; }
+.header-box { width:100%; padding:25px; border-radius:16px; margin-bottom:25px;
     background: linear-gradient(135deg, #6f00ff, #00c8ff);
-    box-shadow: 0 0 25px rgba(111, 0, 255, 0.4),
-                0 0 25px rgba(0, 200, 255, 0.3);
-}
-
-/* Section Cards (Glassmorphism) */
-.neon-card {
-    background: rgba(255,255,255,0.05);
-    border-radius: 18px;
-    padding: 25px;
-    margin-bottom: 30px;
-    backdrop-filter: blur(12px);
-    border: 1px solid rgba(255,255,255,0.08);
-    box-shadow: 0 0 20px rgba(0, 200, 255, 0.15),
-                inset 0 0 25px rgba(111, 0, 255, 0.05);
-}
-
-/* Neon Buttons */
-.stButton>button {
-    background: linear-gradient(135deg,#6f00ff,#00c8ff);
-    color: white;
-    border-radius: 10px;
-    padding: 0.6rem 1.2rem;
-    border: none;
-    font-weight: 600;
-    transition: 0.2s;
-    box-shadow: 0 0 12px rgba(0,200,255,0.5);
-}
-.stButton>button:hover {
-    transform: scale(1.04);
-    box-shadow: 0 0 20px rgba(0,200,255,0.8);
-}
-
-/* Inputs */
-input, select, textarea {
-    background: rgba(255,255,255,0.07) !important;
-    color: white !important;
-}
-
-/* Sidebar */
-[data-testid="stSidebar"] {
-    background: rgba(255, 255, 255, 0.03);
-    backdrop-filter: blur(15px);
-    border-right: 1px solid rgba(255,255,255,0.1);
-}
-
-.sidebar-title {
-    color: #00eaff;
-    font-size: 22px;
-    font-weight: 600;
-    padding-bottom: 12px;
-    border-bottom: 1px solid rgba(255,255,255,0.15);
-}
-
+    box-shadow: 0 0 25px rgba(111,0,255,0.35), 0 0 25px rgba(0,200,255,0.25); }
+.neon-card { background: rgba(255,255,255,0.04); border-radius:18px; padding:25px; margin-bottom:30px;
+    backdrop-filter: blur(12px); border:1px solid rgba(255,255,255,0.06); }
+.stButton>button { background: linear-gradient(135deg,#6f00ff,#00c8ff); color:white; border-radius:10px; padding:0.6rem 1.2rem; border:none; font-weight:600; box-shadow:0 0 12px rgba(0,200,255,0.45); }
+.stButton>button:hover { transform:scale(1.04); box-shadow:0 0 20px rgba(0,200,255,0.8); }
+input, select, textarea { background: rgba(255,255,255,0.06) !important; color: white !important; }
+[data-testid="stSidebar"] { background: rgba(255,255,255,0.03); backdrop-filter: blur(15px); border-right:1px solid rgba(255,255,255,0.08); }
+.sidebar-title { color:#00eaff; font-size:22px; font-weight:600; padding-bottom:12px; border-bottom:1px solid rgba(255,255,255,0.12); }
 .small { font-size:13px; color:#94a3b8; }
 .muted { color:#9aa0a6; font-size:14px; }
-
 .js-plotly-plot .plotly { border-radius:12px; overflow:hidden; }
-
 </style>
 """, unsafe_allow_html=True)
 
@@ -123,7 +74,6 @@ TWILIO_WHATSAPP = "whatsapp:+14155238886"
 client = Client(TWILIO_SID, TWILIO_AUTH) if (TWILIO_SID and TWILIO_AUTH) else None
 
 def send_whatsapp_sos(message, number):
-    """Send via Twilio (best-effort). number may be 10-digit Indian or include country code."""
     if not client:
         return False
     try:
@@ -176,12 +126,9 @@ def risk_from_score(score: float) -> str:
     return "Safe"
 
 def generate_pdf_report_text(state, year, score, risk, tips_text):
-    """Return BytesIO PDF for download — simple professional text report."""
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=letter)
     width, height = letter
-
-    # header
     c.setFont("Helvetica-Bold", 18)
     c.drawString(50, height - 60, "Women Safety Report — AI by Her")
     c.setFont("Helvetica", 11)
@@ -189,10 +136,7 @@ def generate_pdf_report_text(state, year, score, risk, tips_text):
     c.drawString(300, height - 90, f"Year: {year}")
     c.drawString(50, height - 110, f"Safety Score: {score:.2f}/100")
     c.drawString(300, height - 110, f"Risk Level: {risk}")
-
     c.line(50, height - 120, width - 50, height - 120)
-
-    # recommendations / tips
     c.setFont("Helvetica-Bold", 13)
     c.drawString(50, height - 150, "Recommendations")
     c.setFont("Helvetica", 11)
@@ -203,7 +147,6 @@ def generate_pdf_report_text(state, year, score, risk, tips_text):
             y = height - 60
         c.drawString(60, y, "- " + line.strip())
         y -= 18
-
     c.showPage()
     c.save()
     buffer.seek(0)
@@ -226,16 +169,123 @@ def fetch_geojson():
     return None
 
 ############################################
+# Folium (Leaflet) helper - only if folium available
+############################################
+
+def leaflet_state_heatmap(df, model, feature_cols, geojson, crime_col="Rape"):
+    """
+    Build folium map with state polygons, color by aggregated crime_col and popups showing safety score.
+    Returns st_folium render output.
+    """
+    # safety: need folium + st_folium
+    if not FOLIUM_AVAILABLE:
+        st.warning("Folium or streamlit-folium not installed — folium map unavailable.")
+        return None
+
+    # Prepare aggregation
+    agg = df.groupby("State")[crime_col].sum().reset_index().rename(columns={crime_col: "crime_sum"})
+    latest = int(df["Year"].max())
+    scores = {}
+    for st_name in df["State"].unique():
+        row = df[(df["State"] == st_name) & (df["Year"] == latest)]
+        if not row.empty:
+            try:
+                X = pd.DataFrame([row.iloc[0][feature_cols]])
+                scores[st_name.lower()] = float(model.predict(X)[0])
+            except Exception:
+                scores[st_name.lower()] = None
+        else:
+            scores[st_name.lower()] = None
+    agg["safety_score"] = agg["State"].str.lower().map(scores)
+
+    # color map
+    vmin = float(agg["crime_sum"].min())
+    vmax = float(agg["crime_sum"].max())
+    if math.isclose(vmin, vmax):
+        vmax = vmin + 1.0
+    colormap = linear.YlOrRd_09.scale(vmin, vmax)
+
+    # find state name property in GeoJSON
+    sample_props = list(geojson["features"][0]["properties"].keys())
+    name_prop = None
+    for p in ["st_nm", "ST_NM", "STATE", "STATE_NAME", "name", "NAME"]:
+        if p in sample_props:
+            name_prop = p
+            break
+    if not name_prop:
+        for p in sample_props:
+            if isinstance(geojson["features"][0]["properties"][p], str):
+                name_prop = p
+                break
+    if not name_prop:
+        st.error("Could not detect state name property in GeoJSON.")
+        return None
+
+    # style function
+    def style_fn(feature):
+        st_nm = feature["properties"].get(name_prop, "").strip()
+        row = agg[agg["State"].str.lower() == st_nm.lower()]
+        if not row.empty:
+            value = float(row.iloc[0]["crime_sum"])
+            return {"fillOpacity": 0.7, "weight": 0.6, "color": "#222", "fillColor": colormap(value)}
+        else:
+            return {"fillOpacity": 0.15, "weight": 0.4, "color": "#444", "fillColor": "#666666"}
+
+    # create folium map
+    m = folium.Map(location=[22.0, 80.0], zoom_start=5, tiles="CartoDB dark_matter")
+
+    folium.GeoJson(
+        geojson,
+        name="States",
+        style_function=style_fn,
+        highlight_function=lambda x: {"weight":2, "color":"#00ffff", "fillOpacity":0.9},
+        tooltip=folium.GeoJsonTooltip(fields=[name_prop], aliases=["State:"], localize=True)
+    ).add_to(m)
+
+    # add markers/popups at centroid of polygon (approx)
+    for feat in geojson["features"]:
+        st_nm = feat["properties"].get(name_prop, "").strip()
+        try:
+            geom = feat["geometry"]
+            coords = []
+            if geom["type"] == "Polygon":
+                coords = geom["coordinates"][0]
+            elif geom["type"] == "MultiPolygon":
+                coords = geom["coordinates"][0][0]
+            if coords:
+                avg_lat = sum([c[1] for c in coords]) / len(coords)
+                avg_lon = sum([c[0] for c in coords]) / len(coords)
+                row = agg[agg["State"].str.lower() == st_nm.lower()]
+                if not row.empty:
+                    crime_v = int(row.iloc[0]["crime_sum"])
+                    sc = row.iloc[0]["safety_score"]
+                    sc_text = f"{sc:.1f}/100" if (sc is not None and not pd.isna(sc)) else "N/A"
+                    wa_msg = urllib.parse.quote(f"EMERGENCY: Please help. Location: {st_nm}")
+                    # you can substitute your default number in wa_link or leave placeholder
+                    wa_link = f"https://wa.me/91XXXXXXXXXX?text={wa_msg}"
+                    html = f"""<div style="font-family:Arial;color:#012"> <b>{st_nm}</b><br/> Crime (sum): <b>{crime_v}</b><br/> Safety Score: <b>{sc_text}</b><br/><a href="{wa_link}" target="_blank">Quick WhatsApp</a></div>"""
+                else:
+                    html = f"<div><b>{st_nm}</b><br/>No data</div>"
+                folium.Marker(
+                    location=[avg_lat, avg_lon],
+                    icon=folium.DivIcon(html=f"""<div style="font-size:11px;color:#fff;background:rgba(0,0,0,0.45);padding:4px;border-radius:6px">{st_nm}</div>"""),
+                    popup=folium.Popup(html, max_width=300)
+                ).add_to(m)
+        except Exception:
+            continue
+
+    colormap.caption = f"{crime_col} (sum)"
+    colormap.add_to(m)
+
+    # render in Streamlit
+    return st_folium(m, width=900, height=700)
+
+############################################
 # SIDEBAR NAV
 ############################################
 
 st.sidebar.markdown("<div class='sidebar-title'>🛡 AI by Her</div>", unsafe_allow_html=True)
-
-page = st.sidebar.radio(
-    "Navigation",
-    ["Dashboard", "Existing Data", "What-If Simulation",
-     "Trends", "Heatmap", "Recommendations", "SOS Assistant"]
-)
+page = st.sidebar.radio("Navigation", ["Dashboard", "Existing Data", "What-If Simulation", "Trends", "Heatmap", "Recommendations", "SOS Assistant"])
 
 ############################################
 # HEADER
@@ -251,12 +301,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 ############################################
-# DASHBOARD PAGE
+# PAGES (Dashboard, Existing, What-If, Trends...)
 ############################################
 
 if page == "Dashboard":
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
-
     st.subheader("📊 National Safety Overview")
     last_year = int(df["Year"].max())
     try:
@@ -265,24 +314,17 @@ if page == "Dashboard":
         st.metric(f"Avg Safety Score ({last_year})", f"{avg_score:.2f}")
     except Exception:
         st.metric("Avg Safety Score", "—")
-
     st.write(f"States Covered: **{df['State'].nunique()}**")
     st.markdown("</div>", unsafe_allow_html=True)
-
-############################################
-# EXISTING DATA PAGE
-############################################
 
 if page == "Existing Data":
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
     st.subheader("📍 Existing Data — Safety Prediction")
-
     col1, col2 = st.columns(2)
     with col1:
         state = st.selectbox("Select State", sorted(df["State"].unique()))
     with col2:
         year = st.selectbox("Select Year", sorted(df["Year"].unique()))
-
     if st.button("Predict Safety"):
         row = df[(df["State"] == state) & (df["Year"] == year)]
         if row.empty:
@@ -295,8 +337,7 @@ if page == "Existing Data":
                 risk = risk_from_score(score)
                 st.metric("Safety Score", f"{score:.2f}")
                 st.write(f"**Risk Level:** {risk}")
-
-                # SHAP explainability (best-effort)
+                # SHAP (optional)
                 if SHAP_AVAILABLE:
                     st.markdown("#### 🔎 Why this score? (SHAP)")
                     try:
@@ -327,41 +368,23 @@ if page == "Existing Data":
                         st.info("SHAP explanation unavailable.")
                 else:
                     st.info("SHAP not installed — install 'shap' to enable explainability.")
-                # PDF generation
+                # PDF
                 tips_text = ""
                 if risk == "High Risk":
-                    tips_text = "\n".join([
-                        "Avoid isolated areas after sunset",
-                        "Share live location with trusted contacts",
-                        "Keep emergency contacts ready",
-                        "Prefer trusted transportation options"
-                    ])
+                    tips_text = "\n".join(["Avoid isolated areas after sunset", "Share live location with trusted contacts", "Keep emergency contacts ready", "Prefer trusted transportation options"])
                 elif risk == "Medium Risk":
-                    tips_text = "\n".join([
-                        "Travel with company when possible",
-                        "Stay alert in crowded places",
-                        "Use safety apps and share ETA"
-                    ])
+                    tips_text = "\n".join(["Travel with company when possible", "Stay alert in crowded places", "Use safety apps and share ETA"])
                 else:
-                    tips_text = "\n".join([
-                        "Follow general precautions",
-                        "Avoid unnecessary late-night travel",
-                        "Keep phone charged and emergency contacts handy"
-                    ])
+                    tips_text = "\n".join(["Follow general precautions", "Avoid unnecessary late-night travel", "Keep phone charged and emergency contacts handy"])
                 pdf_buffer = generate_pdf_report_text(state, year, score, risk, tips_text)
                 st.download_button(label="📄 Download Safety Report (PDF)", data=pdf_buffer, file_name=f"{state}_{year}_safety_report.pdf", mime="application/pdf")
             except Exception as e:
                 st.error("Prediction failed: " + str(e))
     st.markdown("</div>", unsafe_allow_html=True)
 
-############################################
-# WHAT-IF PAGE
-############################################
-
 if page == "What-If Simulation":
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
     st.subheader("🧪 What-If Crime Simulation")
-
     sim_year = st.number_input("Simulation Year", min_value=2001, max_value=2025, value=2021, step=1)
     left, mid, right = st.columns(3)
     with left:
@@ -374,45 +397,31 @@ if page == "What-If Simulation":
     with right:
         dv = right.number_input("Domestic Violence (DV)", min_value=0, value=80)
         wt = right.number_input("Women Trafficking (WT)", min_value=0, value=10)
-
     if st.button("Simulate Safety Score"):
         total = rape + ka + dd + aow + aom + dv + wt
         if total == 0:
             st.error("At least one crime count must be > 0.")
         else:
             X_sim = pd.DataFrame([{
-                "Year": sim_year,
-                "Rape": rape, "K&A": ka, "DD": dd, "AoW": aow,
+                "Year": sim_year, "Rape": rape, "K&A": ka, "DD": dd, "AoW": aow,
                 "AoM": aom, "DV": dv, "WT": wt,
-                "Rape_ratio": rape/total,
-                "K&A_ratio": ka/total,
-                "DD_ratio": dd/total,
-                "AoW_ratio": aow/total,
-                "AoM_ratio": aom/total,
-                "DV_ratio": dv/total,
-                "WT_ratio": wt/total
+                "Rape_ratio": rape/total, "K&A_ratio": ka/total, "DD_ratio": dd/total,
+                "AoW_ratio": aow/total, "AoM_ratio": aom/total, "DV_ratio": dv/total, "WT_ratio": wt/total
             }])
             try:
                 score = float(model.predict(X_sim)[0])
                 risk = risk_from_score(score)
                 st.metric("Predicted Safety Score", f"{score:.2f}/100")
                 st.write(f"**Risk Level:** `{risk}`")
-
-                pdf_buf = generate_pdf_report_text("Simulated", sim_year, score, risk,
-                                                   "Recommendations based on simulated score.")
+                pdf_buf = generate_pdf_report_text("Simulated", sim_year, score, risk, "Recommendations based on simulated score.")
                 st.download_button("📄 Download Simulation Report (PDF)", pdf_buf, file_name=f"simulation_{sim_year}_report.pdf", mime="application/pdf")
             except Exception as e:
                 st.error("Model prediction failed on simulated input: " + str(e))
     st.markdown("</div>", unsafe_allow_html=True)
 
-############################################
-# TRENDS PAGE
-############################################
-
 if page == "Trends":
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
     st.subheader("📈 Trends Over Years")
-
     col1, col2 = st.columns([1,3])
     with col1:
         t_state = st.selectbox("State", df["State"].unique(), key="trend_state")
@@ -427,64 +436,31 @@ if page == "Trends":
     col2.plotly_chart(fig, use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-############################################
-# HEATMAP PAGE
-############################################
-
 if page == "Heatmap":
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
-    st.subheader("🗺 Heatmap — India (State boundaries)")
-
+    st.subheader("🗺 Heatmap — India (Leaflet / Folium)")
     hcrime = st.selectbox("Select Crime for Heatmap", crime_cols, key="heat_crime")
-    st.markdown("<div class='small'>Fetching GeoJSON for India states (online). Falls back to simple choropleth if unavailable.</div>", unsafe_allow_html=True)
-
+    st.markdown("<div class='small'>If Folium is not installed or network blocked, app will fallback to Plotly choropleth.</div>", unsafe_allow_html=True)
     geo = fetch_geojson()
     hdf = df.groupby("State")[hcrime].sum().reset_index()
-
-    if geo:
+    if geo and FOLIUM_AVAILABLE:
         try:
-            sample_props = list(geo["features"][0]["properties"].keys())
-            name_prop = None
-            for p in ["st_nm", "ST_NM", "STATE", "STATE_NAME", "name", "NAME"]:
-                if p in sample_props:
-                    name_prop = p
-                    break
-            if not name_prop:
-                for p in sample_props:
-                    if isinstance(geo["features"][0]["properties"][p], str):
-                        name_prop = p
-                        break
-            for i, feat in enumerate(geo["features"]):
-                feat["id"] = feat["properties"].get(name_prop, feat["properties"].get(list(feat["properties"].keys())[0], f"id_{i}"))
-
-            fig = px.choropleth_mapbox(
-                hdf,
-                geojson=geo,
-                featureidkey="properties." + name_prop,
-                locations="State",
-                color=hcrime,
-                mapbox_style="carto-darkmatter",
-                center={"lat": 22.0, "lon": 80.0},
-                zoom=3.5,
-                color_continuous_scale="Inferno",
-                title=f"{hcrime} (States)"
-            )
-            fig.update_layout(margin={"r":0,"t":40,"l":0,"b":0}, height=640)
-            st.plotly_chart(fig, use_container_width=True)
-        except Exception:
-            st.info("GeoJSON mapping failed — falling back to simple choropleth.")
+            # Attempt folium leaflet
+            leaflet_state_heatmap(df, model, feature_cols, geo, crime_col=hcrime)
+        except Exception as e:
+            st.error("Folium map failed: " + str(e))
+            # fallback
             fig = px.choropleth(hdf, locationmode="country names", locations="State", color=hcrime, color_continuous_scale="Reds", title=f"{hcrime} (fallback)")
             st.plotly_chart(fig, use_container_width=True)
     else:
-        st.warning("Could not fetch India GeoJSON — using fallback choropleth.")
+        # fallback to plotly choropleth
+        if not geo:
+            st.warning("Could not fetch GeoJSON — using fallback choropleth.")
+        elif not FOLIUM_AVAILABLE:
+            st.warning("Folium / streamlit-folium not installed — using fallback choropleth.")
         fig = px.choropleth(hdf, locationmode="country names", locations="State", color=hcrime, color_continuous_scale="Reds", title=f"{hcrime} (fallback)")
         st.plotly_chart(fig, use_container_width=True)
-
     st.markdown("</div>", unsafe_allow_html=True)
-
-############################################
-# RECOMMENDATIONS PAGE
-############################################
 
 if page == "Recommendations":
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
@@ -501,14 +477,9 @@ if page == "Recommendations":
         st.write("- Avoid late-night solo travel if avoidable  \n- Keep phone charged  \n- Keep emergency contacts handy")
     st.markdown("</div>", unsafe_allow_html=True)
 
-############################################
-# SOS ASSISTANT PAGE
-############################################
-
 if page == "SOS Assistant":
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
     st.subheader("🚨 SOS Assistant — Multi-contact")
-
     col1, col2 = st.columns(2)
     with col1:
         user_name = st.text_input("Your Name")
@@ -516,13 +487,10 @@ if page == "SOS Assistant":
     with col2:
         maps_link = st.text_input("Google Maps Link (Optional)", placeholder="https://maps.app.goo.gl/...")
         send_via_twilio = st.checkbox("Attempt send via Twilio (requires Twilio secrets & verified numbers)", value=False)
-
     st.markdown("---")
     st.subheader("Trusted Contacts")
-
     if "contacts" not in st.session_state:
         st.session_state["contacts"] = []
-
     contacts = st.session_state["contacts"]
     if contacts:
         contact_list = [f"{c['name']} ({c['number']})" for c in contacts]
@@ -530,8 +498,6 @@ if page == "SOS Assistant":
     else:
         st.info("No contacts yet. Add below.")
         selected = []
-
-    # Add contact block (uses st.rerun())
     ca, cb, cc = st.columns([3,3,1])
     with ca:
         new_name = st.text_input("Add contact name", key="add_name")
@@ -542,13 +508,9 @@ if page == "SOS Assistant":
             if not new_name or not new_number:
                 st.error("Provide both name and number.")
             else:
-                st.session_state["contacts"].append({
-                    "name": new_name,
-                    "number": new_number
-                })
+                st.session_state["contacts"].append({"name": new_name, "number": new_number})
                 st.success("Contact added.")
                 st.rerun()
-
     st.markdown("---")
     if st.button("Generate & Show SOS Message"):
         if not user_name or not user_area:
@@ -560,7 +522,6 @@ if page == "SOS Assistant":
             if maps_link:
                 sos_text += f"\n📍 {maps_link}"
             st.code(sos_text)
-
             encoded = urllib.parse.quote(sos_text)
             st.markdown("### WhatsApp quick links (tap to open chat):")
             for entry in selected:
@@ -571,7 +532,6 @@ if page == "SOS Assistant":
                     link_num = "91" + link_num
                 wa_url = f"https://wa.me/{link_num}?text={encoded}"
                 st.markdown(f"- [{nm.strip()}]({wa_url})")
-
             if send_via_twilio:
                 st.info("Attempting Twilio sends (best-effort).")
                 for entry in selected:
@@ -584,9 +544,5 @@ if page == "SOS Assistant":
                         st.error(f"Failed to send to {nm.strip()} (Twilio).")
     st.markdown("</div>", unsafe_allow_html=True)
 
-############################################
-# FOOTER
-############################################
-
 st.markdown("<hr>", unsafe_allow_html=True)
-st.markdown("<div class='small muted'>Tip: If SHAP or GeoJSON features do not display, ensure 'shap' and network access are available. Add required packages to your requirements.txt.</div>", unsafe_allow_html=True)
+st.markdown("<div class='small muted'>Tip: If Folium map does not appear, ensure 'folium' and 'streamlit-folium' are in requirements.txt and GeoJSON fetch is allowed by network.</div>", unsafe_allow_html=True)
