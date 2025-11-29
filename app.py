@@ -517,6 +517,7 @@ with tab6:
         st.info("No contacts yet. Add below.")
         selected = []
 
+    # --- REPLACED CONTACT ADD BLOCK: uses st.rerun() to refresh after add ---
     ca, cb, cc = st.columns([3,3,1])
     with ca:
         new_name = st.text_input("Add contact name", key="add_name")
@@ -527,9 +528,12 @@ with tab6:
             if not new_name or not new_number:
                 st.error("Provide both name and number.")
             else:
-                add_contact(new_name, new_number)
+                st.session_state["contacts"].append({
+                    "name": new_name,
+                    "number": new_number
+                })
                 st.success("Contact added.")
-                st.experimental_rerun()
+                st.rerun()   # ✅ Updated call - replaces deprecated experimental_rerun()
 
     st.markdown("---")
     if st.button("Generate & Show SOS Message"):
