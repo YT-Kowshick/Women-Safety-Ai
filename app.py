@@ -1,7 +1,7 @@
 ############################################
 #  AI BY HER — NEON PREMIUM A2 DASHBOARD   #
 #  Final single-file app.py (shap optional)
-#  Now with Folium (Leaflet) interactive map
+#  Folium (Leaflet) integrated — math import fixed
 ############################################
 
 import streamlit as st
@@ -13,6 +13,8 @@ import io
 import json
 import plotly.express as px
 import plotly.graph_objects as go
+import math
+
 from twilio.rest import Client
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
@@ -169,20 +171,14 @@ def fetch_geojson():
     return None
 
 ############################################
-# Folium (Leaflet) helper - only if folium available
+# Folium (Leaflet) helper
 ############################################
 
 def leaflet_state_heatmap(df, model, feature_cols, geojson, crime_col="Rape"):
-    """
-    Build folium map with state polygons, color by aggregated crime_col and popups showing safety score.
-    Returns st_folium render output.
-    """
-    # safety: need folium + st_folium
     if not FOLIUM_AVAILABLE:
         st.warning("Folium or streamlit-folium not installed — folium map unavailable.")
         return None
 
-    # Prepare aggregation
     agg = df.groupby("State")[crime_col].sum().reset_index().rename(columns={crime_col: "crime_sum"})
     latest = int(df["Year"].max())
     scores = {}
@@ -198,14 +194,12 @@ def leaflet_state_heatmap(df, model, feature_cols, geojson, crime_col="Rape"):
             scores[st_name.lower()] = None
     agg["safety_score"] = agg["State"].str.lower().map(scores)
 
-    # color map
     vmin = float(agg["crime_sum"].min())
     vmax = float(agg["crime_sum"].max())
     if math.isclose(vmin, vmax):
         vmax = vmin + 1.0
     colormap = linear.YlOrRd_09.scale(vmin, vmax)
 
-    # find state name property in GeoJSON
     sample_props = list(geojson["features"][0]["properties"].keys())
     name_prop = None
     for p in ["st_nm", "ST_NM", "STATE", "STATE_NAME", "name", "NAME"]:
@@ -221,7 +215,6 @@ def leaflet_state_heatmap(df, model, feature_cols, geojson, crime_col="Rape"):
         st.error("Could not detect state name property in GeoJSON.")
         return None
 
-    # style function
     def style_fn(feature):
         st_nm = feature["properties"].get(name_prop, "").strip()
         row = agg[agg["State"].str.lower() == st_nm.lower()]
@@ -231,7 +224,6 @@ def leaflet_state_heatmap(df, model, feature_cols, geojson, crime_col="Rape"):
         else:
             return {"fillOpacity": 0.15, "weight": 0.4, "color": "#444", "fillColor": "#666666"}
 
-    # create folium map
     m = folium.Map(location=[22.0, 80.0], zoom_start=5, tiles="CartoDB dark_matter")
 
     folium.GeoJson(
@@ -242,7 +234,6 @@ def leaflet_state_heatmap(df, model, feature_cols, geojson, crime_col="Rape"):
         tooltip=folium.GeoJsonTooltip(fields=[name_prop], aliases=["State:"], localize=True)
     ).add_to(m)
 
-    # add markers/popups at centroid of polygon (approx)
     for feat in geojson["features"]:
         st_nm = feat["properties"].get(name_prop, "").strip()
         try:
@@ -261,7 +252,6 @@ def leaflet_state_heatmap(df, model, feature_cols, geojson, crime_col="Rape"):
                     sc = row.iloc[0]["safety_score"]
                     sc_text = f"{sc:.1f}/100" if (sc is not None and not pd.isna(sc)) else "N/A"
                     wa_msg = urllib.parse.quote(f"EMERGENCY: Please help. Location: {st_nm}")
-                    # you can substitute your default number in wa_link or leave placeholder
                     wa_link = f"https://wa.me/91XXXXXXXXXX?text={wa_msg}"
                     html = f"""<div style="font-family:Arial;color:#012"> <b>{st_nm}</b><br/> Crime (sum): <b>{crime_v}</b><br/> Safety Score: <b>{sc_text}</b><br/><a href="{wa_link}" target="_blank">Quick WhatsApp</a></div>"""
                 else:
@@ -274,10 +264,13 @@ def leaflet_state_heatmap(df, model, feature_cols, geojson, crime_col="Rape"):
         except Exception:
             continue
 
-    colormap.caption = f"{crime_col} (sum)"
-    colormap.add_to(m)
+    # caption uses crime_col
+    try:
+        colormap.caption = f"{crime_col} (sum)"
+        colormap.add_to(m)
+    except Exception:
+        pass
 
-    # render in Streamlit
     return st_folium(m, width=900, height=700)
 
 ############################################
@@ -301,7 +294,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 ############################################
-# PAGES (Dashboard, Existing, What-If, Trends...)
+# PAGES
 ############################################
 
 if page == "Dashboard":
@@ -337,7 +330,6 @@ if page == "Existing Data":
                 risk = risk_from_score(score)
                 st.metric("Safety Score", f"{score:.2f}")
                 st.write(f"**Risk Level:** {risk}")
-                # SHAP (optional)
                 if SHAP_AVAILABLE:
                     st.markdown("#### 🔎 Why this score? (SHAP)")
                     try:
@@ -368,7 +360,6 @@ if page == "Existing Data":
                         st.info("SHAP explanation unavailable.")
                 else:
                     st.info("SHAP not installed — install 'shap' to enable explainability.")
-                # PDF
                 tips_text = ""
                 if risk == "High Risk":
                     tips_text = "\n".join(["Avoid isolated areas after sunset", "Share live location with trusted contacts", "Keep emergency contacts ready", "Prefer trusted transportation options"])
@@ -445,15 +436,12 @@ if page == "Heatmap":
     hdf = df.groupby("State")[hcrime].sum().reset_index()
     if geo and FOLIUM_AVAILABLE:
         try:
-            # Attempt folium leaflet
             leaflet_state_heatmap(df, model, feature_cols, geo, crime_col=hcrime)
         except Exception as e:
             st.error("Folium map failed: " + str(e))
-            # fallback
             fig = px.choropleth(hdf, locationmode="country names", locations="State", color=hcrime, color_continuous_scale="Reds", title=f"{hcrime} (fallback)")
             st.plotly_chart(fig, use_container_width=True)
     else:
-        # fallback to plotly choropleth
         if not geo:
             st.warning("Could not fetch GeoJSON — using fallback choropleth.")
         elif not FOLIUM_AVAILABLE:
