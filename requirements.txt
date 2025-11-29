@@ -1,10 +1,17 @@
 streamlit
 pandas
 joblib
+scikit-learn
 plotly
 requests
-twilio
 reportlab
+twilio
 folium
 streamlit-folium
 branca
+matplotlib
+# optional
+shap
+xgboost
+lightgbm
+catboost
