@@ -1,15 +1,11 @@
 ############################################
 #  AI BY HER — NEON PREMIUM A2 DASHBOARD   #
-############################################
-#  Full Neon UI + Sidebar Navigation
-#  Glassmorphism Cards + Gradient Header
-#  All original backend logic preserved
+#  Final single-file app.py (shap optional)
 ############################################
 
 import streamlit as st
 import pandas as pd
 import joblib
-import shap
 import urllib.parse
 import requests
 import io
@@ -19,7 +15,14 @@ import plotly.graph_objects as go
 from twilio.rest import Client
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
-import matplotlib.pyplot as plt
+
+# Make SHAP optional — import inside try/except
+try:
+    import shap
+    import matplotlib.pyplot as plt
+    SHAP_AVAILABLE = True
+except Exception:
+    SHAP_AVAILABLE = False
 
 ############################################
 # PAGE CONFIG + GLOBAL NEON CSS
@@ -102,34 +105,34 @@ input, select, textarea {
     border-bottom: 1px solid rgba(255,255,255,0.15);
 }
 
+.small { font-size:13px; color:#94a3b8; }
+.muted { color:#9aa0a6; font-size:14px; }
+
+.js-plotly-plot .plotly { border-radius:12px; overflow:hidden; }
+
 </style>
 """, unsafe_allow_html=True)
 
 ############################################
-# TWILIO CONFIG
+# TWILIO CONFIG (optional)
 ############################################
 
 TWILIO_SID = st.secrets.get("TWILIO_SID", None)
 TWILIO_AUTH = st.secrets.get("TWILIO_AUTH", None)
 TWILIO_WHATSAPP = "whatsapp:+14155238886"
-
 client = Client(TWILIO_SID, TWILIO_AUTH) if (TWILIO_SID and TWILIO_AUTH) else None
 
 def send_whatsapp_sos(message, number):
-    """Send via Twilio (best-effort)."""
-    if not client: return False
-    try:
-        if len(number) == 10:
-            number = "91" + number
-        client.messages.create(
-            from_=TWILIO_WHATSAPP,
-            body=message,
-            to=f"whatsapp:+{number}"
-        )
-        return True
-    except:
+    """Send via Twilio (best-effort). number may be 10-digit Indian or include country code."""
+    if not client:
         return False
-
+    try:
+        if len(number) == 10 and number.isdigit():
+            number = "91" + number
+        client.messages.create(from_=TWILIO_WHATSAPP, body=message, to=f"whatsapp:+{number}")
+        return True
+    except Exception:
+        return False
 
 ############################################
 # LOAD DATA + MODEL
@@ -142,6 +145,10 @@ def load_all():
         df = df.drop(columns=["Unnamed: 0"])
 
     crime_cols = ['Rape','K&A','DD','AoW','AoM','DV','WT']
+    for c in crime_cols:
+        if c not in df.columns:
+            raise RuntimeError(f"Missing expected column in CSV: {c}")
+
     df["TotalCrimes"] = df[crime_cols].sum(axis=1).replace({0:1})
     for c in crime_cols:
         df[c + "_ratio"] = df[c] / df["TotalCrimes"]
@@ -157,9 +164,69 @@ def load_all():
 
 df, model, crime_cols, feature_cols = load_all()
 
+############################################
+# HELPERS
+############################################
+
+def risk_from_score(score: float) -> str:
+    if score < 40:
+        return "High Risk"
+    elif score < 70:
+        return "Medium Risk"
+    return "Safe"
+
+def generate_pdf_report_text(state, year, score, risk, tips_text):
+    """Return BytesIO PDF for download — simple professional text report."""
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+
+    # header
+    c.setFont("Helvetica-Bold", 18)
+    c.drawString(50, height - 60, "Women Safety Report — AI by Her")
+    c.setFont("Helvetica", 11)
+    c.drawString(50, height - 90, f"State: {state}")
+    c.drawString(300, height - 90, f"Year: {year}")
+    c.drawString(50, height - 110, f"Safety Score: {score:.2f}/100")
+    c.drawString(300, height - 110, f"Risk Level: {risk}")
+
+    c.line(50, height - 120, width - 50, height - 120)
+
+    # recommendations / tips
+    c.setFont("Helvetica-Bold", 13)
+    c.drawString(50, height - 150, "Recommendations")
+    c.setFont("Helvetica", 11)
+    y = height - 170
+    for line in tips_text.split("\n"):
+        if y < 80:
+            c.showPage()
+            y = height - 60
+        c.drawString(60, y, "- " + line.strip())
+        y -= 18
+
+    c.showPage()
+    c.save()
+    buffer.seek(0)
+    return buffer
+
+@st.cache_data
+def fetch_geojson():
+    urls = [
+        "https://raw.githubusercontent.com/geohacker/india/master/state/india_state.geojson",
+        "https://raw.githubusercontent.com/rajkumarpv/indian-states/master/india_states.geojson",
+        "https://raw.githubusercontent.com/arcdata/india-admin/master/india_states.geojson"
+    ]
+    for u in urls:
+        try:
+            r = requests.get(u, timeout=8)
+            if r.status_code == 200:
+                return r.json()
+        except Exception:
+            continue
+    return None
 
 ############################################
-# SIDEBAR NAVIGATION
+# SIDEBAR NAV
 ############################################
 
 st.sidebar.markdown("<div class='sidebar-title'>🛡 AI by Her</div>", unsafe_allow_html=True)
@@ -170,10 +237,10 @@ page = st.sidebar.radio(
      "Trends", "Heatmap", "Recommendations", "SOS Assistant"]
 )
 
-
 ############################################
 # HEADER
 ############################################
+
 st.markdown("""
 <div class='header-box'>
     <h1 style='color:white;margin:0;font-weight:700;'>Women Safety — AI by Her</h1>
@@ -183,27 +250,27 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-
 ############################################
-# PAGE 1 : MAIN DASHBOARD
+# DASHBOARD PAGE
 ############################################
 
 if page == "Dashboard":
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
 
     st.subheader("📊 National Safety Overview")
-    last_year = df["Year"].max()
-    avg_score = float(model.predict(df[df["Year"] == last_year][feature_cols]).mean())
+    last_year = int(df["Year"].max())
+    try:
+        nat_scores = model.predict(df[df["Year"] == last_year][feature_cols])
+        avg_score = float(pd.Series(nat_scores).mean())
+        st.metric(f"Avg Safety Score ({last_year})", f"{avg_score:.2f}")
+    except Exception:
+        st.metric("Avg Safety Score", "—")
 
-    colA, colB = st.columns(2)
-    colA.metric(f"Avg Safety Score ({last_year})", f"{avg_score:.2f}")
-    colB.metric("Total States Covered", df["State"].nunique())
-
+    st.write(f"States Covered: **{df['State'].nunique()}**")
     st.markdown("</div>", unsafe_allow_html=True)
 
-
 ############################################
-# PAGE 2 : EXISTING DATA CHECK
+# EXISTING DATA PAGE
 ############################################
 
 if page == "Existing Data":
@@ -211,48 +278,110 @@ if page == "Existing Data":
     st.subheader("📍 Existing Data — Safety Prediction")
 
     col1, col2 = st.columns(2)
-    state = col1.selectbox("Select State", sorted(df["State"].unique()))
-    year = col2.selectbox("Select Year", sorted(df["Year"].unique()))
+    with col1:
+        state = st.selectbox("Select State", sorted(df["State"].unique()))
+    with col2:
+        year = st.selectbox("Select Year", sorted(df["Year"].unique()))
 
     if st.button("Predict Safety"):
-        row = df[(df["State"] == state) & (df["Year"] == year)].iloc[0]
-        X = pd.DataFrame([row[feature_cols]])
-        score = float(model.predict(X)[0])
+        row = df[(df["State"] == state) & (df["Year"] == year)]
+        if row.empty:
+            st.error("No data for this selection.")
+        else:
+            row = row.iloc[0]
+            X = pd.DataFrame([row[feature_cols]])
+            try:
+                score = float(model.predict(X)[0])
+                risk = risk_from_score(score)
+                st.metric("Safety Score", f"{score:.2f}")
+                st.write(f"**Risk Level:** {risk}")
 
-        risk = "High Risk" if score < 40 else "Medium Risk" if score < 70 else "Safe"
-
-        st.metric("Safety Score", f"{score:.2f}")
-        st.write(f"Risk Level: **{risk}**")
-
+                # SHAP explainability (best-effort)
+                if SHAP_AVAILABLE:
+                    st.markdown("#### 🔎 Why this score? (SHAP)")
+                    try:
+                        bg = df[df["State"] == state][feature_cols]
+                        if len(bg) < 5:
+                            bg = df[feature_cols].sample(min(50, len(df)))
+                        try:
+                            explainer = shap.TreeExplainer(model)
+                            shap_vals = explainer.shap_values(X)
+                        except Exception:
+                            explainer = shap.KernelExplainer(model.predict, bg)
+                            shap_vals = explainer.shap_values(X, nsamples=100)
+                        if isinstance(shap_vals, list):
+                            shap_plot_vals = shap_vals[0]
+                        else:
+                            shap_plot_vals = shap_vals
+                        try:
+                            plt.figure(figsize=(7,3))
+                            shap.summary_plot(shap_plot_vals, X, plot_type="bar", show=False)
+                            st.pyplot(plt.gcf())
+                            plt.clf()
+                        except Exception:
+                            feat_names = X.columns.tolist()
+                            vals = shap_plot_vals[0] if getattr(shap_plot_vals, "shape", None) else shap_plot_vals
+                            fig = px.bar(x=feat_names, y=vals, title="SHAP contributions")
+                            st.plotly_chart(fig, use_container_width=True)
+                    except Exception:
+                        st.info("SHAP explanation unavailable.")
+                else:
+                    st.info("SHAP not installed — install 'shap' to enable explainability.")
+                # PDF generation
+                tips_text = ""
+                if risk == "High Risk":
+                    tips_text = "\n".join([
+                        "Avoid isolated areas after sunset",
+                        "Share live location with trusted contacts",
+                        "Keep emergency contacts ready",
+                        "Prefer trusted transportation options"
+                    ])
+                elif risk == "Medium Risk":
+                    tips_text = "\n".join([
+                        "Travel with company when possible",
+                        "Stay alert in crowded places",
+                        "Use safety apps and share ETA"
+                    ])
+                else:
+                    tips_text = "\n".join([
+                        "Follow general precautions",
+                        "Avoid unnecessary late-night travel",
+                        "Keep phone charged and emergency contacts handy"
+                    ])
+                pdf_buffer = generate_pdf_report_text(state, year, score, risk, tips_text)
+                st.download_button(label="📄 Download Safety Report (PDF)", data=pdf_buffer, file_name=f"{state}_{year}_safety_report.pdf", mime="application/pdf")
+            except Exception as e:
+                st.error("Prediction failed: " + str(e))
     st.markdown("</div>", unsafe_allow_html=True)
 
-
 ############################################
-# PAGE 3 : WHAT-IF SIMULATION
+# WHAT-IF PAGE
 ############################################
 
 if page == "What-If Simulation":
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
     st.subheader("🧪 What-If Crime Simulation")
 
-    year_sim = st.number_input("Simulation Year", 2001, 2025, 2021)
+    sim_year = st.number_input("Simulation Year", min_value=2001, max_value=2025, value=2021, step=1)
+    left, mid, right = st.columns(3)
+    with left:
+        rape = left.number_input("Rape", min_value=0, value=100)
+        ka = left.number_input("Kidnapping & Abduction (K&A)", min_value=0, value=50)
+        dd = left.number_input("Dowry Deaths (DD)", min_value=0, value=20)
+    with mid:
+        aow = mid.number_input("Assault on Women (AoW)", min_value=0, value=150)
+        aom = mid.number_input("Assault on Minors (AoM)", min_value=0, value=30)
+    with right:
+        dv = right.number_input("Domestic Violence (DV)", min_value=0, value=80)
+        wt = right.number_input("Women Trafficking (WT)", min_value=0, value=10)
 
-    col1, col2, col3 = st.columns(3)
-    rape = col1.number_input("Rape", 0, 100)
-    ka   = col1.number_input("Kidnapping & Abduction", 0, 100)
-    dd   = col2.number_input("Dowry Deaths", 0, 100)
-    aow  = col2.number_input("Assault on Women", 0, 200)
-    aom  = col3.number_input("Assault on Minors", 0, 100)
-    dv   = col3.number_input("Domestic Violence", 0, 200)
-    wt   = col3.number_input("Women Trafficking", 0, 50)
-
-    if st.button("Simulate Score"):
+    if st.button("Simulate Safety Score"):
         total = rape + ka + dd + aow + aom + dv + wt
         if total == 0:
-            st.error("Values cannot be all zero")
+            st.error("At least one crime count must be > 0.")
         else:
-            Xsim = pd.DataFrame([{
-                "Year": year_sim,
+            X_sim = pd.DataFrame([{
+                "Year": sim_year,
                 "Rape": rape, "K&A": ka, "DD": dd, "AoW": aow,
                 "AoM": aom, "DV": dv, "WT": wt,
                 "Rape_ratio": rape/total,
@@ -263,156 +392,201 @@ if page == "What-If Simulation":
                 "DV_ratio": dv/total,
                 "WT_ratio": wt/total
             }])
+            try:
+                score = float(model.predict(X_sim)[0])
+                risk = risk_from_score(score)
+                st.metric("Predicted Safety Score", f"{score:.2f}/100")
+                st.write(f"**Risk Level:** `{risk}`")
 
-            score = float(model.predict(Xsim)[0])
-            st.metric("Predicted Score", f"{score:.2f}")
-
+                pdf_buf = generate_pdf_report_text("Simulated", sim_year, score, risk,
+                                                   "Recommendations based on simulated score.")
+                st.download_button("📄 Download Simulation Report (PDF)", pdf_buf, file_name=f"simulation_{sim_year}_report.pdf", mime="application/pdf")
+            except Exception as e:
+                st.error("Model prediction failed on simulated input: " + str(e))
     st.markdown("</div>", unsafe_allow_html=True)
 
-
 ############################################
-# PAGE 4 : TRENDS
+# TRENDS PAGE
 ############################################
 
 if page == "Trends":
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
     st.subheader("📈 Trends Over Years")
 
-    col1, col2 = st.columns(2)
-    st_sel = col1.selectbox("State", df["State"].unique())
-    crime = col2.selectbox("Crime Type", crime_cols)
-
-    tdf = df[df["State"] == st_sel].sort_values("Year")
-    fig = px.line(tdf, x="Year", y=crime, markers=True, height=450)
-    fig.update_layout(
-        paper_bgcolor='#0b0f19',
-        plot_bgcolor='rgba(255,255,255,0.03)',
-        font=dict(color='white')
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
+    col1, col2 = st.columns([1,3])
+    with col1:
+        t_state = st.selectbox("State", df["State"].unique(), key="trend_state")
+        crime = st.selectbox("Crime Type", crime_cols, key="trend_crime")
+        smoothing = st.checkbox("Show 3-year moving average", value=False)
+    tdf = df[df["State"] == t_state].sort_values("Year")
+    fig = px.line(tdf, x="Year", y=crime, markers=True, title=f"{crime} Trend — {t_state}")
+    if smoothing:
+        tdf["ma3"] = tdf[crime].rolling(3, center=True, min_periods=1).mean()
+        fig.add_trace(go.Scatter(x=tdf["Year"], y=tdf["ma3"], mode="lines", name="3-year MA", line=dict(dash="dash")))
+    fig.update_layout(height=450, margin=dict(t=40,b=20), paper_bgcolor='#0b0f19', plot_bgcolor='rgba(255,255,255,0.03)', font=dict(color='white'))
+    col2.plotly_chart(fig, use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-
 ############################################
-# PAGE 5 : HEATMAP
+# HEATMAP PAGE
 ############################################
 
 if page == "Heatmap":
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
-    st.subheader("🗺 India Heatmap (Online GeoJSON)")
+    st.subheader("🗺 Heatmap — India (State boundaries)")
 
-    crime = st.selectbox("Crime Type", crime_cols)
+    hcrime = st.selectbox("Select Crime for Heatmap", crime_cols, key="heat_crime")
+    st.markdown("<div class='small'>Fetching GeoJSON for India states (online). Falls back to simple choropleth if unavailable.</div>", unsafe_allow_html=True)
 
-    try:
-        geo = requests.get(
-            "https://raw.githubusercontent.com/geohacker/india/master/state/india_state.geojson"
-        ).json()
+    geo = fetch_geojson()
+    hdf = df.groupby("State")[hcrime].sum().reset_index()
 
-        hdf = df.groupby("State")[crime].sum().reset_index()
+    if geo:
+        try:
+            sample_props = list(geo["features"][0]["properties"].keys())
+            name_prop = None
+            for p in ["st_nm", "ST_NM", "STATE", "STATE_NAME", "name", "NAME"]:
+                if p in sample_props:
+                    name_prop = p
+                    break
+            if not name_prop:
+                for p in sample_props:
+                    if isinstance(geo["features"][0]["properties"][p], str):
+                        name_prop = p
+                        break
+            for i, feat in enumerate(geo["features"]):
+                feat["id"] = feat["properties"].get(name_prop, feat["properties"].get(list(feat["properties"].keys())[0], f"id_{i}"))
 
-        fig = px.choropleth_mapbox(
-            hdf,
-            geojson=geo,
-            locations="State",
-            featureidkey="properties.st_nm",
-            color=crime,
-            color_continuous_scale="Inferno",
-            mapbox_style="carto-darkmatter",
-            center={"lat": 22, "lon": 80},
-            zoom=3.5,
-            opacity=0.7,
-            height=600
-        )
+            fig = px.choropleth_mapbox(
+                hdf,
+                geojson=geo,
+                featureidkey="properties." + name_prop,
+                locations="State",
+                color=hcrime,
+                mapbox_style="carto-darkmatter",
+                center={"lat": 22.0, "lon": 80.0},
+                zoom=3.5,
+                color_continuous_scale="Inferno",
+                title=f"{hcrime} (States)"
+            )
+            fig.update_layout(margin={"r":0,"t":40,"l":0,"b":0}, height=640)
+            st.plotly_chart(fig, use_container_width=True)
+        except Exception:
+            st.info("GeoJSON mapping failed — falling back to simple choropleth.")
+            fig = px.choropleth(hdf, locationmode="country names", locations="State", color=hcrime, color_continuous_scale="Reds", title=f"{hcrime} (fallback)")
+            st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.warning("Could not fetch India GeoJSON — using fallback choropleth.")
+        fig = px.choropleth(hdf, locationmode="country names", locations="State", color=hcrime, color_continuous_scale="Reds", title=f"{hcrime} (fallback)")
         st.plotly_chart(fig, use_container_width=True)
-
-    except:
-        st.error("GeoJSON fetch failed. Try again.")
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-
 ############################################
-# PAGE 6 : RECOMMENDATIONS
+# RECOMMENDATIONS PAGE
 ############################################
 
 if page == "Recommendations":
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
-    st.subheader("🛡 Safety Recommendations")
-
-    score = st.slider("Your Score", 0, 100, 50)
-
-    if score < 40:
-        st.error("High Risk — Avoid isolated areas, share live location.")
-    elif score < 70:
-        st.warning("Medium Risk — Travel with someone & stay alert.")
+    st.subheader("🛡 Recommendations & Safety Tips")
+    score_input = st.slider("Your Safety Score (example)", 0, 100, 50)
+    if score_input < 40:
+        st.error("🚨 High Risk — Follow these:")
+        st.write("- Avoid isolated areas after sunset  \n- Share live location with someone trusted  \n- Keep emergency contacts and SOS ready")
+    elif score_input < 70:
+        st.warning("⚠ Medium Risk — Follow these:")
+        st.write("- Travel with company when possible  \n- Stay alert in crowded places  \n- Use safety features on phone apps")
     else:
-        st.success("Safe Zone — Follow basic precautions.")
-
+        st.success("✔ Safe Zone — Follow general precautions:")
+        st.write("- Avoid late-night solo travel if avoidable  \n- Keep phone charged  \n- Keep emergency contacts handy")
     st.markdown("</div>", unsafe_allow_html=True)
 
-
 ############################################
-# PAGE 7 : SOS ASSISTANT
+# SOS ASSISTANT PAGE
 ############################################
 
 if page == "SOS Assistant":
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
-    st.subheader("🚨 SOS Alert Assistant")
+    st.subheader("🚨 SOS Assistant — Multi-contact")
 
     col1, col2 = st.columns(2)
-    name = col1.text_input("Your Name")
-    area = col1.text_input("Your Area / Landmark")
-    maps = col2.text_input("Google Maps Link", "")
-    send_twilio = col2.checkbox("Send via Twilio")
-
-    # Contacts
-    st.markdown("### 🔗 Trusted Contacts")
-    if "contacts" not in st.session_state:
-        st.session_state.contacts = []
-
-    contacts = st.session_state.contacts
-    display = [f"{c['name']} ({c['number']})" for c in contacts]
-
-    selected = st.multiselect("Select contacts", display)
-
-    # Add new contact
-    st.markdown("### ➕ Add Contact")
-    ca, cb, cc = st.columns([3,3,1])
-    new_n = ca.text_input("Name", key="nn")
-    new_p = cb.text_input("Number", key="np")
-
-    if cc.button("Add"):
-        if new_n and new_p:
-            st.session_state.contacts.append({"name": new_n, "number": new_p})
-            st.success("Added!")
-            st.rerun()
-        else:
-            st.error("Enter valid details")
+    with col1:
+        user_name = st.text_input("Your Name")
+        user_area = st.text_input("Area / Landmark")
+    with col2:
+        maps_link = st.text_input("Google Maps Link (Optional)", placeholder="https://maps.app.goo.gl/...")
+        send_via_twilio = st.checkbox("Attempt send via Twilio (requires Twilio secrets & verified numbers)", value=False)
 
     st.markdown("---")
+    st.subheader("Trusted Contacts")
 
-    if st.button("Generate SOS"):
-        if not name or not area or len(selected)==0:
-            st.error("Fill all details")
+    if "contacts" not in st.session_state:
+        st.session_state["contacts"] = []
+
+    contacts = st.session_state["contacts"]
+    if contacts:
+        contact_list = [f"{c['name']} ({c['number']})" for c in contacts]
+        selected = st.multiselect("Select contacts to alert", contact_list)
+    else:
+        st.info("No contacts yet. Add below.")
+        selected = []
+
+    # Add contact block (uses st.rerun())
+    ca, cb, cc = st.columns([3,3,1])
+    with ca:
+        new_name = st.text_input("Add contact name", key="add_name")
+    with cb:
+        new_number = st.text_input("Add WhatsApp number (10 digits or with code)", key="add_num")
+    with cc:
+        if st.button("Add Contact"):
+            if not new_name or not new_number:
+                st.error("Provide both name and number.")
+            else:
+                st.session_state["contacts"].append({
+                    "name": new_name,
+                    "number": new_number
+                })
+                st.success("Contact added.")
+                st.rerun()
+
+    st.markdown("---")
+    if st.button("Generate & Show SOS Message"):
+        if not user_name or not user_area:
+            st.error("Enter your name and area.")
+        elif len(selected) == 0:
+            st.error("Select at least one contact.")
         else:
-            msg = f"🚨 EMERGENCY ALERT 🚨\nI, {name}, am in danger at {area}."
-            if maps: msg += f"\nLocation: {maps}"
+            sos_text = f"🚨 EMERGENCY ALERT 🚨\nI, {user_name}, am in danger at {user_area}.\nPlease reach me immediately."
+            if maps_link:
+                sos_text += f"\n📍 {maps_link}"
+            st.code(sos_text)
 
-            st.code(msg)
-
-            enc = urllib.parse.quote(msg)
-            st.markdown("### WhatsApp Links")
-
+            encoded = urllib.parse.quote(sos_text)
+            st.markdown("### WhatsApp quick links (tap to open chat):")
             for entry in selected:
                 nm, num = entry.split("(")
                 num = num.replace(")", "").strip()
-                if len(num)==10: num = "91"+num
-                st.markdown(f"- [{nm.strip()}](https://wa.me/{num}?text={enc})")
+                link_num = num
+                if len(link_num) == 10 and link_num.isdigit():
+                    link_num = "91" + link_num
+                wa_url = f"https://wa.me/{link_num}?text={encoded}"
+                st.markdown(f"- [{nm.strip()}]({wa_url})")
 
-                if send_twilio:
-                    ok = send_whatsapp_sos(msg, num)
-                    if ok: st.success(f"Sent to {nm.strip()}")
-                    else: st.error(f"Failed → {nm.strip()}")
-
+            if send_via_twilio:
+                st.info("Attempting Twilio sends (best-effort).")
+                for entry in selected:
+                    nm, num = entry.split("(")
+                    num = num.replace(")", "").strip()
+                    ok = send_whatsapp_sos(sos_text, num)
+                    if ok:
+                        st.success(f"Sent to {nm.strip()}")
+                    else:
+                        st.error(f"Failed to send to {nm.strip()} (Twilio).")
     st.markdown("</div>", unsafe_allow_html=True)
+
+############################################
+# FOOTER
+############################################
+
+st.markdown("<hr>", unsafe_allow_html=True)
+st.markdown("<div class='small muted'>Tip: If SHAP or GeoJSON features do not display, ensure 'shap' and network access are available. Add required packages to your requirements.txt.</div>", unsafe_allow_html=True)
