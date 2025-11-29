@@ -4,6 +4,9 @@ scikit-learn
 joblib
 twilio
 plotly
+reportlab
+
+
 
 
 
