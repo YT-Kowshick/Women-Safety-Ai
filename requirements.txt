@@ -5,6 +5,10 @@ joblib
 twilio
 plotly
 reportlab
+folium
+streamlit-folium
+
+
 
 
 
