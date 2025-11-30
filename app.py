@@ -1,8 +1,11 @@
-# app.py
-# AI by Her — Robust single-file Streamlit app (final enhanced UI + extra features)
-# Requirements (base): streamlit, pandas, joblib, plotly, requests, reportlab, PyPDF2
-# Optional (enable map/SHAP/Twilio features): folium, streamlit-folium, branca, shap, matplotlib, twilio
-# Save as app.py and run with `streamlit run app.py`
+# app.py — AI by Her (final robust single-file Streamlit app)
+#
+# Minimal requirements (add to requirements.txt):
+# streamlit pandas joblib plotly requests reportlab
+# Optional (enable these for extra features): folium streamlit-folium branca twilio shap matplotlib
+#
+# Usage: put CrimesOnWomenData.csv and optionally safety_model.pkl in app folder.
+# Run: streamlit run app.py
 
 import streamlit as st
 import pandas as pd
@@ -10,14 +13,13 @@ import joblib
 import urllib.parse
 import requests
 import io
-import json
 import traceback
 import plotly.express as px
 import plotly.graph_objects as go
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 
-# Optional libs (import safely)
+# Optional libs (import with try/except so the app never crashes)
 try:
     from twilio.rest import Client
     TWILIO_AVAILABLE = True
@@ -40,7 +42,7 @@ except Exception:
     FOLIUM_AVAILABLE = False
 
 # ----------------------------
-# Utility: safe rerun (handles streamlit versions)
+# Safe rerun helper (handles different Streamlit versions)
 # ----------------------------
 def safe_rerun():
     try:
@@ -55,53 +57,48 @@ def safe_rerun():
         return
 
 # ----------------------------
-# Page config + neon CSS (improved)
+# Page config + Neon-ish CSS
 # ----------------------------
 st.set_page_config(page_title="AI by Her — Women Safety", page_icon="🛡", layout="wide")
-st.markdown(
-    """
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap');
-    html, body, [class*="css"] { font-family: Poppins, sans-serif; background: #061021; color:#e6eef8; }
-    .header { padding:20px; border-radius:14px; background: linear-gradient(135deg,#7b2cff,#00d4ff); box-shadow:0 12px 40px rgba(0,0,0,0.6); margin-bottom:20px;}
-    .neon-card { background: rgba(255,255,255,0.02); border-radius:12px; padding:18px; margin-bottom:16px; border:1px solid rgba(255,255,255,0.04); }
-    .muted { color:#9aa0a6; font-size:13px; }
-    .accent { color:#00d4ff; font-weight:600; }
-    .stButton>button { background: linear-gradient(90deg,#7b2cff,#00d4ff); color:white; border-radius:8px; padding:8px 14px; font-weight:700; }
-    .metric { color:#00ffcc; font-weight:700; }
-    .small { font-size:12px; color:#94a3b8; }
-    a { color:#00eaff; }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap');
+html, body, [class*="css"] { font-family: Poppins, sans-serif; background: #061021; color:#e6eef8; }
+.header { padding:18px; border-radius:12px; background: linear-gradient(135deg,#7b2cff,#00d4ff); box-shadow:0 12px 40px rgba(0,0,0,0.6); margin-bottom:20px;}
+.neon-card { background: rgba(255,255,255,0.02); border-radius:12px; padding:16px; margin-bottom:16px; border:1px solid rgba(255,255,255,0.03); }
+.small { font-size:13px; color:#94a3b8; }
+.stButton>button { background: linear-gradient(90deg,#7b2cff,#00d4ff); color:white; border-radius:8px; padding:8px 12px; font-weight:700; }
+.muted { color:#9aa0a6; }
+a { color:#00eaff; }
+</style>
+""", unsafe_allow_html=True)
 
 # ----------------------------
-# Twilio (optional): use secrets if available
+# Twilio setup (optional)
 # ----------------------------
 TWILIO_SID = st.secrets.get("TWILIO_SID", None)
 TWILIO_AUTH = st.secrets.get("TWILIO_AUTH", None)
 TWILIO_WHATSAPP = "whatsapp:+14155238886"
-client = None
+twilio_client = None
 if TWILIO_AVAILABLE and TWILIO_SID and TWILIO_AUTH:
     try:
-        client = Client(TWILIO_SID, TWILIO_AUTH)
+        twilio_client = Client(TWILIO_SID, TWILIO_AUTH)
     except Exception:
-        client = None
+        twilio_client = None
 
 def send_whatsapp_via_twilio(txt, number):
-    if not client:
+    if not twilio_client:
         return False
     try:
         if len(number) == 10 and number.isdigit():
             number = "91" + number
-        client.messages.create(from_=TWILIO_WHATSAPP, body=txt, to=f"whatsapp:+{number}")
+        twilio_client.messages.create(from_=TWILIO_WHATSAPP, body=txt, to=f"whatsapp:+{number}")
         return True
     except Exception:
         return False
 
 # ----------------------------
-# Helpers: PDF, risk, fallback predictor
+# Helpers: PDF export, risk conversion, fallback predictor
 # ----------------------------
 def generate_pdf_report(state, year, score, risk, tips):
     buffer = io.BytesIO()
@@ -145,7 +142,7 @@ def fallback_predict(df_row):
     return float(max(0.0, min(100.0, score)))
 
 # ----------------------------
-# Load CSV + model robustly; allow model upload via UI
+# Load CSV robustly & optional model load helper
 # ----------------------------
 @st.cache_data
 def load_csv(path="CrimesOnWomenData.csv"):
@@ -164,25 +161,22 @@ def load_csv(path="CrimesOnWomenData.csv"):
 
 def try_load_model(path_or_file):
     try:
-        if isinstance(path_or_file, (str,)):
-            return joblib.load(path_or_file), None
-        else:
-            # file-like object: save to temp buffer and load
-            return joblib.load(path_or_file), None
+        # joblib.load accepts file-like objects too in this usage
+        return joblib.load(path_or_file), None
     except Exception:
         return None, traceback.format_exc()
 
-# Initialize data & model
+# initial load
+csv_error = None
 try:
     df, crime_cols, feature_cols = load_csv("CrimesOnWomenData.csv")
-    csv_error = None
 except Exception as e:
     df = None
     crime_cols = None
     feature_cols = None
     csv_error = traceback.format_exc()
 
-# Attempt to autoload model from file in repo
+# attempt to auto-load model file (if present)
 model = None
 model_error = None
 try:
@@ -192,72 +186,68 @@ except Exception:
     model_error = traceback.format_exc()
 
 # ----------------------------
-# Sidebar: Navigation & quick actions
+# Sidebar: navigation and upload options
 # ----------------------------
 st.sidebar.markdown("<div style='font-weight:700;color:#00eaff;font-size:20px'>AI by Her</div>", unsafe_allow_html=True)
 page = st.sidebar.radio("Navigate", ["Dashboard","Existing","What-If","Trends","Heatmap","Leaderboard","Recommendations","SOS","Model"])
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("**Quick actions**")
-if st.sidebar.button("Refresh data & model"):
+if st.sidebar.button("Refresh (data & model)"):
     safe_rerun()
 
-# Upload model if autoload failed or user has a new model
-st.sidebar.markdown("---")
-st.sidebar.markdown("**Upload / Replace model (optional)**")
-uploaded_model = st.sidebar.file_uploader("Upload safety_model.pkl", type=["pkl","joblib"])
+st.sidebar.markdown("### Upload / Replace")
+uploaded_model = st.sidebar.file_uploader("Upload safety_model.pkl (optional)", type=["pkl","joblib"])
 if uploaded_model is not None:
     m, err = try_load_model(uploaded_model)
     if m:
         model = m
         model_error = None
-        st.sidebar.success("Model loaded from upload.")
+        st.sidebar.success("Model uploaded and loaded successfully.")
     else:
+        model = None
         model_error = err
-        st.sidebar.error("Model load failed (see Model page for details).")
+        st.sidebar.error("Model upload failed (check model format).")
 
-# Upload alternative CSV (optional)
-st.sidebar.markdown("---")
-csv_upload = st.sidebar.file_uploader("Upload CSV (optional) - format same as sample", type=["csv"])
-if csv_upload is not None:
+uploaded_csv = st.sidebar.file_uploader("Upload Crimes CSV (optional)", type=["csv"])
+if uploaded_csv is not None:
     try:
-        df_new, crime_cols_new, feature_cols_new = load_csv(csv_upload)
+        df_new, crime_cols_new, feature_cols_new = load_csv(uploaded_csv)
         df, crime_cols, feature_cols = df_new, crime_cols_new, feature_cols_new
-        st.sidebar.success("CSV loaded.")
+        st.sidebar.success("CSV uploaded and loaded.")
         safe_rerun()
     except Exception as e:
-        st.sidebar.error("CSV load failed: check columns.")
+        st.sidebar.error("CSV upload failed: check columns & format.")
 
-# Header area
+# ----------------------------
+# Header & status
+# ----------------------------
 st.markdown("""
 <div class='header'>
-  <h1 style='margin:0'>SheShield AI — Women Safety Intelligence</h1>
-  <div class='muted' style='margin-top:6px'>Predictive safety scores • Heatmaps • What-if simulation • SOS Assistant</div>
+  <h1 style='margin:0'>SheShield AI — Women Safety</h1>
+  <div class='small muted' style='margin-top:6px'>Predictive safety scores • Heatmaps • What-if simulation • SOS Alerts</div>
 </div>
 """, unsafe_allow_html=True)
 
-# Show CSV error if any
 if csv_error:
-    st.error("Data load error: cannot find or parse 'CrimesOnWomenData.csv'. Upload a valid CSV in the sidebar or place file in app folder.")
+    st.error("Data load error: missing or invalid 'CrimesOnWomenData.csv'. Upload correct CSV via sidebar.")
     with st.expander("Data load error (dev)"):
         st.code(csv_error)
 
-# Show model status
 if model is None:
-    st.warning("ML model not loaded. App uses a safe deterministic fallback predictor.")
-    with st.expander("Model load help"):
-        st.write("If you trained with XGBoost/LightGBM/CatBoost, add those packages to requirements.txt and redeploy OR upload a compatible model file here.")
+    st.warning("ML model not loaded. The app will use a safe deterministic fallback predictor.")
+    with st.expander("Model guidance"):
+        st.write("If your model uses libraries like xgboost/lightgbm/catboost, add those to requirements.txt and redeploy, or upload model via sidebar.")
 else:
-    st.success("ML model loaded — predictions available.")
+    st.success("ML model loaded — predictions enabled.")
 
 # ----------------------------
-# Page: Dashboard
+# Dashboard
 # ----------------------------
 if page == "Dashboard":
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
     st.subheader("National Overview")
     if df is None:
-        st.info("No data to show. Upload CSV in sidebar.")
+        st.info("No data available. Upload CSV in sidebar.")
     else:
         last_year = int(df["Year"].max())
         sample = df[df["Year"] == last_year][feature_cols]
@@ -271,7 +261,7 @@ if page == "Dashboard":
             avg_score = float(pd.Series([fallback_predict(sample.iloc[[i]]) for i in range(len(sample))]).mean())
         st.metric(f"Average Safety ({last_year})", f"{avg_score:.1f}/100")
         st.write(f"States: **{df['State'].nunique()}** • Years: **{df['Year'].nunique()}**")
-        # small leaderboard spark table (lowest safety)
+        # show 5 lowest-scoring states
         ldf = df[df["Year"] == last_year].copy()
         if model is not None:
             try:
@@ -286,13 +276,13 @@ if page == "Dashboard":
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ----------------------------
-# Page: Existing
+# Existing Data page
 # ----------------------------
 if page == "Existing":
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
     st.subheader("Existing Data — Safety Prediction")
     if df is None:
-        st.info("Upload CSV in the sidebar to use this page.")
+        st.info("Upload CSV to use this page.")
     else:
         col1, col2 = st.columns([2,1])
         with col1:
@@ -302,23 +292,22 @@ if page == "Existing":
         if st.button("Predict Safety"):
             row = df[(df["State"] == state) & (df["Year"] == year)]
             if row.empty:
-                st.error("No data found for this selection.")
+                st.error("No data for selection.")
             else:
                 X = pd.DataFrame([row.iloc[0][feature_cols]])
                 if model is not None:
                     try:
                         score = float(model.predict(X)[0])
                     except Exception:
-                        st.warning("Model prediction failed on this input — using fallback.")
+                        st.warning("Model prediction failed — using fallback.")
                         score = fallback_predict(X)
                 else:
                     score = fallback_predict(X)
                 risk = risk_from_score(score)
                 st.metric("Safety Score", f"{score:.2f}/100")
                 st.write(f"**Risk Level:** {risk}")
-                # Provide state CSV download and PDF
-                st.markdown("**Download data for this state:**")
-                st.download_button("CSV for state", data=row.to_csv(index=False).encode('utf-8'), file_name=f"{state}_{year}_data.csv", mime="text/csv")
+                # downloads
+                st.download_button("Download state CSV", data=row.to_csv(index=False).encode('utf-8'), file_name=f"{state}_{year}.csv", mime="text/csv")
                 tips = ""
                 if risk == "High Risk":
                     tips = "Avoid isolated areas after sunset\nShare live location\nKeep emergency contacts ready\nPrefer verified transport"
@@ -328,9 +317,9 @@ if page == "Existing":
                     tips = "Follow general precautions\nKeep phone charged and emergency contacts handy"
                 pdf_buf = generate_pdf_report(state, year, score, risk, tips)
                 st.download_button("Download Safety Report (PDF)", pdf_buf, file_name=f"{state}_{year}_report.pdf", mime="application/pdf")
-                # SHAP explanation (optional)
-                if SHAP_AVAILABLE:
-                    with st.expander("SHAP explainability (if model supports TreeExplainer)"):
+                # SHAP (optional)
+                if SHAP_AVAILABLE and model is not None:
+                    with st.expander("SHAP explanation (optional)"):
                         try:
                             bg = df[feature_cols].sample(min(50, len(df)))
                             explainer = shap.TreeExplainer(model)
@@ -339,15 +328,15 @@ if page == "Existing":
                             st.pyplot(plt.gcf())
                             plt.clf()
                         except Exception:
-                            st.info("SHAP explanation not available for this model type or environment.")
+                            st.info("SHAP explanation unavailable for this model type or environment.")
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ----------------------------
-# Page: What-If Simulation
+# What-If Simulation page
 # ----------------------------
 if page == "What-If":
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
-    st.subheader("What-If Crime Scenario Simulation")
+    st.subheader("What-If Crime Scenario")
     sim_year = st.number_input("Simulation Year", min_value=2001, max_value=2025, value=2021)
     left, mid, right = st.columns(3)
     with left:
@@ -375,7 +364,7 @@ if page == "What-If":
                 try:
                     score = float(model.predict(X_sim)[0])
                 except Exception:
-                    st.warning("Model failed to predict on simulated input — using fallback.")
+                    st.warning("Model prediction failed — using fallback.")
                     score = fallback_predict(X_sim)
             else:
                 score = fallback_predict(X_sim)
@@ -387,16 +376,16 @@ if page == "What-If":
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ----------------------------
-# Page: Trends
+# Trends page
 # ----------------------------
 if page == "Trends":
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
-    st.subheader("Crime Trends")
+    st.subheader("Trends Over Years")
     if df is None:
-        st.info("Upload CSV to see trends.")
+        st.info("Upload CSV to show trends.")
     else:
-        t_state = st.selectbox("State for trend", df["State"].unique(), key="trend_state")
-        crime = st.selectbox("Crime type", crime_cols, key="trend_crime")
+        t_state = st.selectbox("State", df["State"].unique(), key="trend_state")
+        crime = st.selectbox("Crime", crime_cols, key="trend_crime")
         smoothing = st.checkbox("Show 3-year moving average", value=False)
         tdf = df[df["State"] == t_state].sort_values("Year")
         fig = px.line(tdf, x="Year", y=crime, markers=True, title=f"{crime} Trend — {t_state}")
@@ -408,19 +397,17 @@ if page == "Trends":
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ----------------------------
-# Page: Heatmap (Folium/Leaflet + centroid markers) with toggles
+# Heatmap (Folium/Leaflet) with Plotly fallback
 # ----------------------------
 if page == "Heatmap":
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
     st.subheader("Heatmap — India (Leaflet / Folium)")
     if df is None:
-        st.info("Upload CSV to use heatmap.")
+        st.info("Upload CSV to show heatmap.")
     else:
         hcrime = st.selectbox("Select crime for heatmap", crime_cols, key="heat_crime")
-        map_style = st.selectbox("Map tiles", ["CartoDB dark_matter","OpenStreetMap","Stamen Toner"], index=0)
-        st.markdown("<div class='small'>Uses Folium for Leaflet map when available; falls back to Plotly choropleth otherwise.</div>", unsafe_allow_html=True)
+        st.markdown("<div class='small'>If Folium or GeoJSON fail, app uses Plotly fallback.</div>", unsafe_allow_html=True)
 
-        # geojson fetch (robust)
         def fetch_geojson():
             urls = [
                 "https://raw.githubusercontent.com/geohacker/india/master/state/india_state.geojson",
@@ -452,7 +439,7 @@ if page == "Heatmap":
                         if isinstance(geo["features"][0]["properties"].get(p, None), str):
                             name_prop = p
                             break
-                m = folium.Map(location=[22.0,80.0], zoom_start=5, tiles=map_style if map_style else "CartoDB dark_matter")
+                m = folium.Map(location=[22.0,80.0], zoom_start=5, tiles="CartoDB dark_matter")
                 data_map = {r["State"].strip().lower(): r[hcrime] for _, r in hdf.iterrows()}
                 maxv = hdf[hcrime].max() if not hdf.empty else 1
                 minv = hdf[hcrime].min() if not hdf.empty else 0
@@ -466,7 +453,7 @@ if page == "Heatmap":
                 folium.GeoJson(geo, style_function=style_fn, tooltip=folium.GeoJsonTooltip(fields=[name_prop], aliases=["State:"])).add_to(m)
                 colormap.caption = f"{hcrime} (sum)"
                 colormap.add_to(m)
-                # centroid markers with safety score
+                # add centroids
                 for feat in geo["features"]:
                     try:
                         nm = str(feat["properties"].get(name_prop, "")).strip()
@@ -506,12 +493,13 @@ if page == "Heatmap":
             if not geo:
                 st.info("Could not fetch GeoJSON — using Plotly fallback.")
             if not FOLIUM_AVAILABLE:
-                st.info("Folium / streamlit-folium not installed — using Plotly fallback.")
+                st.info("Folium or streamlit-folium not installed — using Plotly fallback.")
             st.plotly_chart(px.choropleth(hdf, locationmode="country names", locations="State", color=hcrime, color_continuous_scale="Reds"), use_container_width=True)
+
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ----------------------------
-# Page: Leaderboard (exportable)
+# Leaderboard page
 # ----------------------------
 if page == "Leaderboard":
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
@@ -530,35 +518,34 @@ if page == "Leaderboard":
             ldf["score"] = [fallback_predict(ldf.iloc[[i]][feature_cols]) for i in range(len(ldf))]
         top = ldf.sort_values("score").head(10)[["State","score"]].reset_index(drop=True)
         st.table(top)
-        csv_bytes = top.to_csv(index=False).encode("utf-8")
-        st.download_button("Download Leaderboard CSV", csv_bytes, file_name="leaderboard_latest.csv", mime="text/csv")
+        st.download_button("Download Leaderboard CSV", top.to_csv(index=False).encode('utf-8'), file_name="leaderboard.csv", mime="text/csv")
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ----------------------------
-# Page: Recommendations
+# Recommendations page
 # ----------------------------
 if page == "Recommendations":
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
-    st.subheader("Safety Recommendations & Quick Tips")
+    st.subheader("Recommendations & Quick Tips")
     score_input = st.slider("Example Safety Score", 0, 100, 50)
     if score_input < 40:
         st.error("High risk — recommended actions:")
         st.write("- Avoid isolated areas after sunset\n- Share live location with trusted contacts\n- Keep emergency contacts ready\n- Prefer verified transport")
     elif score_input < 70:
         st.warning("Medium risk — recommended actions:")
-        st.write("- Travel with company\n- Stay alert in crowded places\n- Use safety apps and share ETA")
+        st.write("- Travel with company\n- Stay alert\n- Use safety apps and share ETA")
     else:
         st.success("Safer area — general precautions:")
         st.write("- Avoid unnecessary late-night travel\n- Keep phone charged\n- Keep emergency contacts handy")
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ----------------------------
-# Page: SOS assistant
+# SOS Assistant
 # ----------------------------
 if page == "SOS":
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
     st.subheader("SOS Assistant — Multi-contact (WhatsApp)")
-    col1,col2 = st.columns(2)
+    col1, col2 = st.columns(2)
     with col1:
         user_name = st.text_input("Your name")
         user_area = st.text_input("Area / Landmark")
@@ -606,15 +593,8 @@ if page == "SOS":
                 num = num.replace(")","").strip()
                 link_num = num if not (len(num) == 10 and num.isdigit()) else "91"+num
                 wa = f"https://wa.me/{link_num}?text={encoded}"
-                st.markdown(f"- [{nm.strip()}]({wa})  ")
+                st.markdown(f"- [{nm.strip()}]({wa})")
             st.write("")  # spacing
-            st.markdown("**Copy links** (for pasting to others):")
-            for entry in selected:
-                nm, num = entry.split("(")
-                num = num.replace(")","").strip()
-                link_num = num if not (len(num) == 10 and num.isdigit()) else "91"+num
-                wa = f"https://wa.me/{link_num}?text={encoded}"
-                st.text(wa)
             if send_twilio:
                 st.info("Attempting Twilio sends...")
                 for entry in selected:
@@ -628,34 +608,30 @@ if page == "SOS":
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ----------------------------
-# Page: Model (debug & upload)
+# Model page (diagnostics & optional traceback)
 # ----------------------------
 if page == "Model":
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
     st.subheader("Model & Diagnostics")
-    st.write("Model status and management.")
     if model is None:
-        st.warning("No ML model loaded. Use sidebar to upload a model file or place 'safety_model.pkl' in app folder.")
+        st.warning("No ML model loaded. Upload via sidebar or add 'safety_model.pkl' to app folder.")
     else:
         st.success("ML model loaded.")
     if model_error:
-        with st.expander("Model load error (developer)"):
+        with st.expander("Model load error (dev)"):
             st.code(model_error)
-    # quick test field to run a prediction on a selected state/year
     if df is not None:
-        state_test = st.selectbox("Test state", df["State"].unique(), key="test_state")
-        year_test = st.selectbox("Test year", sorted(df["Year"].unique()), key="test_year")
-        if st.button("Run quick prediction (diagnostic)"):
-            row = df[(df["State"]==state_test)&(df["Year"]==year_test)]
+        st.write("Run a quick diagnostic prediction:")
+        s_state = st.selectbox("Select state for diagnostic", df["State"].unique(), key="diag_state")
+        s_year = st.selectbox("Select year", sorted(df["Year"].unique()), key="diag_year")
+        if st.button("Run diagnostic"):
+            row = df[(df["State"]==s_state)&(df["Year"]==s_year)]
             if row.empty:
                 st.error("No row found.")
             else:
                 X = pd.DataFrame([row.iloc[0][feature_cols]])
                 try:
-                    if model is not None:
-                        s = float(model.predict(X)[0])
-                    else:
-                        s = fallback_predict(X)
+                    s = float(model.predict(X)[0]) if model is not None else fallback_predict(X)
                     st.metric("Predicted safety score", f"{s:.2f}/100")
                     st.write("Risk:", risk_from_score(s))
                 except Exception as e:
@@ -663,7 +639,7 @@ if page == "Model":
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ----------------------------
-# Footer + tips
+# Footer: tips
 # ----------------------------
 st.markdown("<hr>", unsafe_allow_html=True)
-st.markdown("<div class='small muted'>Tip: Add optional packages to requirements.txt to enable advanced features (folium, streamlit-folium, shap, twilio). The app uses a deterministic fallback predictor if the ML model can't be loaded.</div>", unsafe_allow_html=True)
+st.markdown("<div class='small muted'>Tip: Add optional packages to requirements.txt if you want maps (folium & streamlit-folium), SHAP plots (shap & matplotlib), or Twilio sends (twilio).</div>", unsafe_allow_html=True)
