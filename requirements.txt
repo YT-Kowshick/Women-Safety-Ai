@@ -1,17 +1,21 @@
 streamlit
 pandas
 joblib
-scikit-learn
 plotly
 requests
-reportlab
-twilio
+scikit-learn
+# visualization / map
 folium
 streamlit-folium
 branca
-matplotlib
-# optional
-shap
+# optional: for PDF generation
+reportlab
+# optional: if your model uses these
 xgboost
 lightgbm
 catboost
+# optional: Twilio
+twilio
+# optional: SHAP for explainability
+shap
+matplotlib
