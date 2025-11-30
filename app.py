@@ -1,6 +1,6 @@
 # app.py
-# AI by Her — Final single-file app (robust + polished UI + Folium Leaflet)
-# Paste this whole file as app.py
+# AI by Her — Single-file app with sequential Next/Previous navigation
+# Paste this file as app.py
 
 import streamlit as st
 import pandas as pd
@@ -63,9 +63,9 @@ html, body, [class*="css"] { font-family: Inter, sans-serif; background: #0b0f19
 .metric-box { display:flex; gap:12px; align-items:center; }
 .stButton>button { background: linear-gradient(135deg,#6f00ff,#00c8ff); color:white; border-radius:8px; padding:8px 14px; font-weight:600; }
 .input { background: rgba(255,255,255,0.04) !important; color:white !important; }
-[data-testid="stSidebar"] { background: rgba(255,255,255,0.02); }
-.table-fixed { height: 320px; overflow: auto; }
-.badge { background: rgba(255,255,255,0.04); padding:8px 10px; border-radius:8px; display:inline-block; }
+.page-footer { display:flex; gap:12px; justify-content:space-between; align-items:center; margin-top:18px; }
+.page-step { color:#cbd5e1; font-weight:600; }
+[data-testid="stSidebar"] { display:none; } /* hide sidebar as we use sequential navigation */
 </style>
 """, unsafe_allow_html=True)
 
@@ -86,7 +86,6 @@ def send_whatsapp_via_twilio(txt, number):
     if not client:
         return False
     try:
-        # Ensure country code
         if len(number) == 10 and number.isdigit():
             number = "91" + number
         client.messages.create(from_=TWILIO_WHATSAPP, body=txt, to=f"whatsapp:+{number}")
@@ -98,7 +97,6 @@ def send_whatsapp_via_twilio(txt, number):
 # Helpers: PDF/text report, risk, fallback predictor
 # ----------------------------
 def generate_pdf_report_bytes(state, year, score, risk, tips):
-    """Return bytes-like for PDF or fallback text file if reportlab missing."""
     if REPORTLAB_AVAILABLE:
         buffer = io.BytesIO()
         c = canvas.Canvas(buffer, pagesize=letter)
@@ -126,7 +124,6 @@ def generate_pdf_report_bytes(state, year, score, risk, tips):
         buffer.seek(0)
         return buffer
     else:
-        # fallback: return plain text bytes
         txt = f"Women Safety Report — AI by Her\nState: {state}\nYear: {year}\nSafety Score: {score:.2f}/100\nRisk Level: {risk}\n\nRecommendations:\n{tips}\n"
         return io.BytesIO(txt.encode("utf-8"))
 
@@ -136,9 +133,7 @@ def risk_from_score(score):
     return "Safe"
 
 def fallback_predict_from_row(row):
-    # row: DataFrame single row with counts
     counts = row[["Rape","K&A","DD","AoW","AoM","DV","WT"]].sum(axis=1).iloc[0]
-    # scale: more crimes => lower score; stable mapping
     score = 100.0 * (1.0 - (counts / (counts + 1000.0)))
     return float(max(0.0, min(100.0, score)))
 
@@ -158,8 +153,6 @@ def load_all():
     for c in expected:
         df[c + "_ratio"] = df[c] / df["TotalCrimes"]
     feature_cols = ['Year'] + expected + [c + "_ratio" for c in expected]
-
-    # Try to load model (may fail if library missing)
     model = None
     model_error = None
     try:
@@ -173,22 +166,57 @@ def load_all():
 df, model, crime_cols, feature_cols, model_error = load_all()
 
 # ----------------------------
-# Sidebar + navigation
+# Sequential pages setup
 # ----------------------------
-st.sidebar.markdown("<div style='font-weight:700;color:#00eaff;font-size:20px'>AI by Her</div>", unsafe_allow_html=True)
-page = st.sidebar.radio("Navigate", ["Dashboard","Existing","What-if","Trends","Heatmap","Leaderboard","Recommendations","SOS"])
+pages = [
+    "Dashboard",
+    "Existing Data",
+    "What-If Simulation",
+    "Trends",
+    "Heatmap (Leaflet)",
+    "Leaderboard",
+    "Recommendations",
+    "SOS Assistant"
+]
 
-st.markdown("<div class='header'><h1 style='margin:0'>Women Safety — AI by Her</h1><div style='opacity:0.9;margin-top:6px' class='small'>Neon UI • Leaflet map • PDF reports • SOS alerts</div></div>", unsafe_allow_html=True)
+if "page_index" not in st.session_state:
+    st.session_state["page_index"] = 0
 
+def go_next():
+    if st.session_state["page_index"] < len(pages) - 1:
+        st.session_state["page_index"] += 1
+
+def go_prev():
+    if st.session_state["page_index"] > 0:
+        st.session_state["page_index"] -= 1
+
+def jump_to(i):
+    st.session_state["page_index"] = int(i)
+
+# header
+st.markdown("<div class='header'><h1 style='margin:0'>Women Safety — AI by Her</h1><div style='opacity:0.9;margin-top:6px' class='small'>Sequential flow • Neon UI • Leaflet map • SOS alerts</div></div>", unsafe_allow_html=True)
+
+# show model status
 if model is None:
-    st.warning("Model failed to load — app uses a deterministic fallback predictor so the UI works. See developer expander for logs.")
+    st.warning("Model failed to load — a deterministic fallback predictor will be used so the UI works.")
 else:
     st.success("Model loaded — ML predictions enabled.")
 
+# top progress & quick jump
+colA, colB = st.columns([3,1])
+with colA:
+    st.markdown(f"<div class='page-step'>Step {st.session_state['page_index']+1} of {len(pages)} — {pages[st.session_state['page_index']]}</div>", unsafe_allow_html=True)
+with colB:
+    # quick jump dropdown (optional)
+    sel = st.selectbox("Jump to", options=pages, index=st.session_state["page_index"], key="jump_select")
+    if sel and pages.index(sel) != st.session_state["page_index"]:
+        jump_to(pages.index(sel))
+        st.experimental_rerun()
+
 # ----------------------------
-# DASHBOARD
+# Page: Dashboard
 # ----------------------------
-if page == "Dashboard":
+if pages[st.session_state["page_index"]] == "Dashboard":
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
     st.subheader("National Overview")
     last_year = int(df["Year"].max())
@@ -203,33 +231,12 @@ if page == "Dashboard":
         avg_score = float(pd.Series([fallback_predict_from_row(sample.iloc[[i]]) for i in range(len(sample))]).mean())
     st.metric(f"Average Safety ({last_year})", f"{avg_score:.1f}/100")
     st.write(f"States covered: **{df['State'].nunique()}**")
-    # quick top/bottom mini charts
-    st.markdown("---")
-    col1, col2 = st.columns(2)
-    # Most recent year aggregation and compute safety by state
-    agg = df[df["Year"] == last_year].copy()
-    def state_score(row):
-        X = pd.DataFrame([row[feature_cols]])
-        if model is not None:
-            try:
-                return float(model.predict(X)[0])
-            except Exception:
-                return fallback_predict_from_row(X)
-        else:
-            return fallback_predict_from_row(X)
-    agg["score"] = agg.apply(lambda r: state_score(r), axis=1)
-    top5 = agg.sort_values("score", ascending=False).head(5)
-    bot5 = agg.sort_values("score", ascending=True).head(5)
-    col1.markdown("**Top 5 Safest (latest year)**")
-    col1.table(top5[["State","score"]].set_index("State").style.format("{:.1f}"))
-    col2.markdown("**Top 5 Riskiest (latest year)**")
-    col2.table(bot5[["State","score"]].set_index("State").style.format("{:.1f}"))
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ----------------------------
-# EXISTING page
+# Page: Existing Data
 # ----------------------------
-if page == "Existing":
+if pages[st.session_state["page_index"]] == "Existing Data":
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
     st.subheader("Existing Data: Predict Safety for State & Year")
     c1, c2 = st.columns([2,1])
@@ -254,22 +261,6 @@ if page == "Existing":
             risk = risk_from_score(score)
             st.metric("Safety Score", f"{score:.2f}/100")
             st.write(f"**Risk Level:** {risk}")
-            # quick compare (same UI block)
-            if st.button("Compare with another state/year"):
-                comp_state = st.selectbox("Compare state", sorted(df["State"].unique()), key="comp1")
-                comp_year = st.selectbox("Compare year", sorted(df["Year"].unique()), key="comp2")
-                crow = df[(df["State"]==comp_state)&(df["Year"]==comp_year)]
-                if not crow.empty:
-                    Xc = pd.DataFrame([crow.iloc[0][feature_cols]])
-                    if model is not None:
-                        try:
-                            cscore = float(model.predict(Xc)[0])
-                        except Exception:
-                            cscore = fallback_predict_from_row(Xc)
-                    else:
-                        cscore = fallback_predict_from_row(Xc)
-                    st.write(f"**{comp_state} ({comp_year})** — Score: **{cscore:.2f}/100**")
-            # download report
             tips = ""
             if risk == "High Risk":
                 tips = "Avoid isolated areas after sunset\nShare live location with trusted contacts\nKeep emergency contacts ready\nPrefer verified transport"
@@ -285,9 +276,9 @@ if page == "Existing":
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ----------------------------
-# WHAT-IF
+# Page: What-If Simulation
 # ----------------------------
-if page == "What-if":
+if pages[st.session_state["page_index"]] == "What-If Simulation":
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
     st.subheader("What-if Crime Scenario Simulator")
     sim_year = st.number_input("Simulation Year", min_value=2001, max_value=2025, value=2021)
@@ -332,9 +323,9 @@ if page == "What-if":
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ----------------------------
-# TRENDS
+# Page: Trends
 # ----------------------------
-if page == "Trends":
+if pages[st.session_state["page_index"]] == "Trends":
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
     st.subheader("Trends & Charts")
     col_ctrl, col_plot = st.columns([1,3])
@@ -349,20 +340,19 @@ if page == "Trends":
         fig.add_trace(go.Scatter(x=tdf["Year"], y=tdf["ma3"], mode="lines", name="3-year MA", line=dict(dash="dash")))
     fig.update_layout(height=420, paper_bgcolor="#0b0f19", plot_bgcolor="rgba(255,255,255,0.03)", font=dict(color="white"))
     col_plot.plotly_chart(fig, use_container_width=True)
-    # Download data option
     if st.button("Download state time-series CSV"):
         csv_bytes = tdf.to_csv(index=False).encode("utf-8")
         st.download_button("Download CSV", csv_bytes, file_name=f"{t_state}_timeseries.csv", mime="text/csv")
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ----------------------------
-# HEATMAP (Leaflet / Folium)
+# Page: Heatmap (Folium)
 # ----------------------------
-if page == "Heatmap":
+if pages[st.session_state["page_index"]] == "Heatmap (Leaflet)":
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
     st.subheader("Heatmap — India (Leaflet/Folium with Plotly fallback)")
     hcrime = st.selectbox("Select crime", crime_cols, key="heat_crime")
-    st.markdown("<div class='small'>If Folium not installed or GeoJSON fetch fails, app falls back to Plotly choropleth.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='small'>If Folium or GeoJSON fetch fails, app falls back to Plotly choropleth.</div>", unsafe_allow_html=True)
 
     def fetch_geojson():
         urls = [
@@ -384,7 +374,6 @@ if page == "Heatmap":
 
     if geo and FOLIUM_AVAILABLE:
         try:
-            # Detect name property
             sample_props = list(geo["features"][0]["properties"].keys())
             name_prop = None
             for p in ["st_nm","ST_NM","STATE","STATE_NAME","name","NAME"]:
@@ -396,7 +385,6 @@ if page == "Heatmap":
                     if isinstance(geo["features"][0]["properties"].get(p, None), str):
                         name_prop = p
                         break
-            # Folium map
             m = folium.Map(location=[22.0,80.0], zoom_start=5, tiles="CartoDB dark_matter")
             data_map = {r["State"].strip().lower(): r[hcrime] for _, r in hdf.iterrows()}
             maxv = float(hdf[hcrime].max()) if not hdf.empty else 1.0
@@ -411,7 +399,6 @@ if page == "Heatmap":
             folium.GeoJson(geo, style_function=style_fn, tooltip=folium.GeoJsonTooltip(fields=[name_prop], aliases=["State:"])).add_to(m)
             colormap.caption = f"{hcrime} (sum)"
             colormap.add_to(m)
-            # Add simple markers/popups
             for feat in geo["features"]:
                 try:
                     props = feat["properties"]
@@ -455,20 +442,18 @@ if page == "Heatmap":
             st.info("Folium not installed — using Plotly fallback.")
         st.plotly_chart(px.choropleth(hdf, locationmode="country names", locations="State", color=hcrime, color_continuous_scale="Reds"), use_container_width=True)
 
-    # provide CSV download of aggregated data
     csv_agg = hdf.to_csv(index=False).encode("utf-8")
     st.download_button("Download aggregated CSV", csv_agg, file_name=f"heatmap_{hcrime}.csv", mime="text/csv")
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ----------------------------
-# LEADERBOARD / TABLES - extra features
+# Page: Leaderboard
 # ----------------------------
-if page == "Leaderboard":
+if pages[st.session_state["page_index"]] == "Leaderboard":
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
     st.subheader("Leaderboard & State Explorer")
     latest = int(df["Year"].max())
     dd = df[df["Year"]==latest].copy()
-    # compute score for each state
     def state_score_row(r):
         X = pd.DataFrame([r[feature_cols]])
         if model is not None:
@@ -478,7 +463,6 @@ if page == "Leaderboard":
                 return fallback_predict_from_row(X)
         return fallback_predict_from_row(X)
     dd["score"] = dd.apply(lambda r: state_score_row(r), axis=1)
-    # Leaderboard
     colA, colB = st.columns(2)
     with colA:
         st.markdown("**Top 10 Safest**")
@@ -487,8 +471,7 @@ if page == "Leaderboard":
         st.markdown("**Top 10 Riskiest**")
         st.table(dd.sort_values("score", ascending=True).head(10)[["State","score"]].set_index("State").style.format("{:.1f}"))
     st.markdown("---")
-    # Searchable table & download filtered
-    q = st.text_input("Search states (type name, partial)")
+    q = st.text_input("Search states (partial)")
     if q:
         filtered = dd[dd["State"].str.contains(q, case=False, na=False)]
     else:
@@ -500,9 +483,9 @@ if page == "Leaderboard":
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ----------------------------
-# RECOMMENDATIONS
+# Page: Recommendations
 # ----------------------------
-if page == "Recommendations":
+if pages[st.session_state["page_index"]] == "Recommendations":
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
     st.subheader("Safety Recommendations")
     score_input = st.slider("Example Safety Score", 0, 100, 50)
@@ -518,9 +501,9 @@ if page == "Recommendations":
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ----------------------------
-# SOS assistant
+# Page: SOS Assistant
 # ----------------------------
-if page == "SOS":
+if pages[st.session_state["page_index"]] == "SOS Assistant":
     st.markdown("<div class='neon-card'>", unsafe_allow_html=True)
     st.subheader("SOS Assistant — Multi-contact WhatsApp")
     col1, col2 = st.columns(2)
@@ -588,12 +571,29 @@ if page == "SOS":
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ----------------------------
+# Bottom navigation (Prev / Next)
+# ----------------------------
+st.markdown("<div class='page-footer'>", unsafe_allow_html=True)
+col_prev, col_mid, col_next = st.columns([1,6,1])
+with col_prev:
+    if st.button("◀ Previous"):
+        go_prev()
+        st.experimental_rerun()
+with col_mid:
+    st.markdown(f"<div style='text-align:center;color:#9aa0a6'>Page: <b>{pages[st.session_state['page_index']]}</b></div>", unsafe_allow_html=True)
+with col_next:
+    if st.button("Next ▶"):
+        go_next()
+        st.experimental_rerun()
+st.markdown("</div>", unsafe_allow_html=True)
+
+# ----------------------------
 # Developer trace expander (if model error)
 # ----------------------------
 if model_error:
     with st.expander("Model load error — developer info (click to reveal)"):
-        st.write("Model failed to load during startup. Full traceback printed to server logs.")
+        st.write("Model failed to load at startup. Add model's library (xgboost/lightgbm/etc.) to requirements.txt and redeploy.")
         if st.checkbox("Show full traceback in UI (dev only)"):
             st.code(model_error)
 
-st.markdown("<div class='small' style='margin-top:12px'>Tip: If you see ModuleNotFoundError when unpickling, add that package (ex: xgboost, lightgbm, catboost) to requirements.txt and redeploy.</div>", unsafe_allow_html=True)
+st.markdown("<div class='small' style='margin-top:12px'>Tip: If you see ModuleNotFoundError when unpickling, add that package (e.g. xgboost) to requirements.txt and redeploy.</div>", unsafe_allow_html=True)
