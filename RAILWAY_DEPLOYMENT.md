@@ -4,6 +4,12 @@ This project is a monorepo with:
 - `backend/` (FastAPI)
 - `frontend/` (Vite React)
 
+If Railway is pointed at the **repo root**, Railpack now uses root scripts:
+- `build.sh`
+- `start.sh`
+
+This root fallback starts the backend service.
+
 Deploy as **2 Railway services** from the same GitHub repo.
 
 ---
