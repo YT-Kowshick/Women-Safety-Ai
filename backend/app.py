@@ -21,6 +21,8 @@ import pandas as pd
 import joblib
 import os
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # ---------- FASTAPI APP INITIALIZATION ----------
 
 app = FastAPI(
@@ -30,10 +32,15 @@ app = FastAPI(
 )
 
 # Enable CORS for frontend (React, Next.js, etc.)
+# Railway/production: set ALLOWED_ORIGINS to comma-separated domains.
+# Example: ALLOWED_ORIGINS=https://frontend.up.railway.app,https://www.example.com
+allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "*")
+allowed_origins = [origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify exact frontend URLs
-    allow_credentials=True,
+    allow_origins=allowed_origins,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -51,7 +58,8 @@ def load_data_and_model():
     global df, model, crime_cols, feature_cols
     
     # Load dataset
-    df = pd.read_csv("CrimesOnWomenData.csv")
+    dataset_path = os.path.join(BASE_DIR, "CrimesOnWomenData.csv")
+    df = pd.read_csv(dataset_path)
     if "Unnamed: 0" in df.columns:
         df = df.drop(columns=["Unnamed: 0"])
 
@@ -72,7 +80,8 @@ def load_data_and_model():
     ]
 
     # Load trained model
-    model = joblib.load("safety_model.pkl")
+    model_path = os.path.join(BASE_DIR, "safety_model.pkl")
+    model = joblib.load(model_path)
     
     print("✅ Data and model loaded successfully")
 

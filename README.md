@@ -197,6 +197,7 @@ Results: 6/6 tests passed
 - **[Integration Guide](INTEGRATION_GUIDE.md)** - Connect frontend to backend
 - **[API Documentation](backend/API_DOCUMENTATION.md)** - Complete API reference
 - **[Backend README](backend/README.md)** - Backend setup and usage
+- **[Railway Deployment Guide](RAILWAY_DEPLOYMENT.md)** - Deploy backend + frontend on Railway
 
 ## 🛠️ Tech Stack
 
